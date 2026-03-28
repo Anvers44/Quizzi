@@ -15,7 +15,6 @@ import type { GameState, Player, PowerType, TeamId } from "./types";
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type AppServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
-// socketId → { roomCode, playerId }
 const socketMap = new Map<string, { roomCode: string; playerId: string }>();
 const revealTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -25,8 +24,8 @@ export function getIo() {
   return _io;
 }
 
-// ─── Public helpers ──────────────────────────────────────────
-function toPublicPlayer(p: Player, eliminatedIds: string[]): PublicPlayer {
+// ─── Helpers ─────────────────────────────────────────────────
+function toPublicPlayer(p: Player, eliminated: string[]): PublicPlayer {
   return {
     id: p.id,
     pseudo: p.pseudo,
@@ -35,7 +34,7 @@ function toPublicPlayer(p: Player, eliminatedIds: string[]): PublicPlayer {
     connected: p.connected,
     teamId: p.teamId,
     currentPower: p.currentPower,
-    isEliminated: eliminatedIds.includes(p.id),
+    isEliminated: eliminated.includes(p.id),
     activeEffectTypes: p.activeEffects.map((e) => e.type),
   };
 }
@@ -62,8 +61,8 @@ function getActivePlayers(state: GameState): Player[] {
   );
 }
 
-// ─── Room expiry ─────────────────────────────────────────────
-function scheduleRoomExpiry(io: AppServer, roomCode: string) {
+// ─── Expiry ───────────────────────────────────────────────────
+function scheduleExpiry(io: AppServer, roomCode: string) {
   const ex = expiryTimers.get(roomCode);
   if (ex) clearTimeout(ex);
   const t = setTimeout(async () => {
@@ -80,40 +79,33 @@ function scheduleRoomExpiry(io: AppServer, roomCode: string) {
   expiryTimers.set(roomCode, t);
 }
 
-// ─── Round helpers ───────────────────────────────────────────
-function isLastQuestionOfRound(state: GameState): boolean {
+// ─── Round helpers ────────────────────────────────────────────
+function isLastQOfRound(state: GameState): boolean {
   return (
     (state.currentQuestionIndex + 1) % state.config.questionsPerRound === 0
   );
 }
 function isGameOver(state: GameState): boolean {
-  if (state.config.mode === "tournament") {
+  if (state.config.mode === "tournament")
     return getActivePlayers(state).length <= 1;
-  }
   return state.currentRound >= state.config.rounds;
 }
 
-// ─── Power helpers ───────────────────────────────────────────
-function assignPowersForRound(state: GameState): void {
+// ─── Powers ───────────────────────────────────────────────────
+function assignPowers(state: GameState): void {
   if (!state.config.powersEnabled) return;
   for (const p of getActivePlayers(state)) {
     p.currentPower = ALL_POWERS[Math.floor(Math.random() * ALL_POWERS.length)];
     p.powerUsedThisRound = false;
   }
 }
-
-function applyDefenseEffect(power: PowerType, player: Player): void {
-  if (power === "shield") player.shieldActive = true;
-  if (power === "double") player.doubleNextAnswer = true;
-  if (power === "mirror") player.mirrorActive = true;
-  if (power === "ghost") player.ghostActive = true;
+function applyDefense(power: PowerType, p: Player) {
+  if (power === "shield") p.shieldActive = true;
+  if (power === "double") p.doubleNextAnswer = true;
+  if (power === "mirror") p.mirrorActive = true;
+  if (power === "ghost") p.ghostActive = true;
 }
-
-function applyAttackEffect(
-  power: PowerType,
-  target: Player,
-  fromId: string,
-): void {
+function applyAttack(power: PowerType, target: Player, fromId: string) {
   const now = Date.now();
   const dur = power === "freeze" ? 4000 : 6000;
   if (power === "freeze") target.frozenUntil = now + dur;
@@ -124,12 +116,8 @@ function applyAttackEffect(
   });
 }
 
-// ─── Emit assigned powers ────────────────────────────────────
-async function emitPowers(
-  io: AppServer,
-  roomCode: string,
-  state: GameState,
-): Promise<void> {
+// ─── Emit powers to each player socket ───────────────────────
+async function emitPowers(io: AppServer, roomCode: string, state: GameState) {
   if (!state.config.powersEnabled) return;
   const sockets = await io.in(roomCode).fetchSockets();
   for (const p of Object.values(state.players)) {
@@ -138,18 +126,17 @@ async function emitPowers(
       ([, v]) => v.playerId === p.id && v.roomCode === roomCode,
     );
     if (!entry) continue;
-    const [sid] = entry;
-    const s = sockets.find((sock) => sock.id === sid);
+    const s = sockets.find((sk) => sk.id === entry[0]);
     s?.emit("power:assigned", { power: p.currentPower });
   }
 }
 
-// ─── Start question ──────────────────────────────────────────
-async function startQuestion(io: AppServer, roomCode: string): Promise<void> {
+// ─── Start question ───────────────────────────────────────────
+async function startQuestion(io: AppServer, roomCode: string) {
   const state = await getRoom(roomCode);
   if (!state) return;
-  const question = state.questions[state.currentQuestionIndex];
-  if (!question) {
+  const q = state.questions[state.currentQuestionIndex];
+  if (!q) {
     await finishGame(io, roomCode);
     return;
   }
@@ -158,8 +145,8 @@ async function startQuestion(io: AppServer, roomCode: string): Promise<void> {
   state.questionStartedAt = Date.now();
   state.pausedAt = null;
   state.timeElapsedBeforePause = 0;
+  state.lastQuestionPoints = {};
 
-  // Clean effects
   const now = Date.now();
   for (const p of Object.values(state.players)) {
     p.activeEffects = p.activeEffects.filter((e) => e.expiresAt > now);
@@ -168,39 +155,33 @@ async function startQuestion(io: AppServer, roomCode: string): Promise<void> {
   await saveRoom(state);
 
   const payload: QuestionPayload = {
-    id: question.id,
-    text: question.text,
-    choices: question.choices,
-    timeLimit: question.timeLimit,
+    id: q.id,
+    text: q.text,
+    choices: q.choices,
+    timeLimit: q.timeLimit,
     index: state.currentQuestionIndex,
     total: state.questions.length,
     startedAt: state.questionStartedAt!,
     round: state.currentRound,
     totalRounds: state.config.rounds,
+    imageUrl: q.imageUrl,
+    difficulty: q.difficulty,
   };
   io.to(roomCode).emit("question:start", payload);
 
-  const t = setTimeout(
-    () => triggerReveal(io, roomCode),
-    question.timeLimit * 1000,
-  );
+  const t = setTimeout(() => triggerReveal(io, roomCode), q.timeLimit * 1000);
   revealTimers.set(roomCode, t);
 }
 
-// ─── Reveal ──────────────────────────────────────────────────
-export async function triggerReveal(
-  io: AppServer,
-  roomCode: string,
-): Promise<void> {
+// ─── Reveal ───────────────────────────────────────────────────
+export async function triggerReveal(io: AppServer, roomCode: string) {
   const rv = revealTimers.get(roomCode);
   if (rv) {
     clearTimeout(rv);
     revealTimers.delete(roomCode);
   }
-
   const state = await getRoom(roomCode);
   if (!state || state.status !== "playing") return;
-
   state.status = "revealing";
   await saveRoom(state);
 
@@ -216,18 +197,17 @@ export async function triggerReveal(
     scores: toPublicPlayers(state),
     playerAnswers,
     teams: state.teams,
+    pointsEarned: state.lastQuestionPoints || {},
   });
 }
 
-// ─── Round end ───────────────────────────────────────────────
-async function endRound(io: AppServer, roomCode: string): Promise<void> {
+// ─── Round end ────────────────────────────────────────────────
+async function endRound(io: AppServer, roomCode: string) {
   const state = await getRoom(roomCode);
   if (!state) return;
   state.status = "round_end";
-
   let eliminatedPlayerId: string | undefined;
   let eliminatedPseudo: string | undefined;
-
   if (state.config.mode === "tournament") {
     const active = getActivePlayers(state);
     if (active.length > 1) {
@@ -235,41 +215,34 @@ async function endRound(io: AppServer, roomCode: string): Promise<void> {
       state.eliminatedPlayerIds.push(loser.id);
       eliminatedPlayerId = loser.id;
       eliminatedPseudo = loser.pseudo;
-      console.log(
-        `[tournament] ${loser.pseudo} eliminated in round ${state.currentRound}`,
-      );
     }
   }
   await saveRoom(state);
-
-  const payload: RoundEndPayload = {
+  io.to(roomCode).emit("game:round_end", {
     round: state.currentRound,
     totalRounds: state.config.rounds,
     scores: toPublicPlayers(state),
     teams: state.teams,
     eliminatedPlayerId,
     eliminatedPseudo,
-  };
-  io.to(roomCode).emit("game:round_end", payload);
+  });
 }
 
-// ─── Finish game ─────────────────────────────────────────────
-async function finishGame(io: AppServer, roomCode: string): Promise<void> {
+// ─── Finish ───────────────────────────────────────────────────
+async function finishGame(io: AppServer, roomCode: string) {
   const state = await getRoom(roomCode);
   if (!state) return;
   state.status = "finished";
   await saveRoom(state);
-
   const scores = toPublicPlayers(state);
   const active = scores
     .filter((p) => !p.isEliminated)
     .sort((a, b) => b.score - a.score);
   const winnerId = active[0]?.id;
   let winnerTeamId: TeamId | undefined;
-  if (state.config.mode === "teams") {
+  if (state.config.mode === "teams")
     winnerTeamId =
       state.teams.red.score >= state.teams.blue.score ? "red" : "blue";
-  }
   io.to(roomCode).emit("game:finished", {
     scores,
     teams: state.teams,
@@ -278,23 +251,22 @@ async function finishGame(io: AppServer, roomCode: string): Promise<void> {
   });
 }
 
-// ─── Check all answered ──────────────────────────────────────
+// ─── Check all answered ───────────────────────────────────────
 export async function checkAllAnswered(
   io: AppServer,
   roomCode: string,
   questionId: string,
-): Promise<void> {
+) {
   const state = await getRoom(roomCode);
   if (!state || state.status !== "playing") return;
   const active = getActivePlayers(state);
   if (active.length === 0) return;
-  if (active.every((p) => p.answeredQuestions.includes(questionId))) {
+  if (active.every((p) => p.answeredQuestions.includes(questionId)))
     await triggerReveal(io, roomCode);
-  }
 }
 
-// ─── Register all socket handlers ───────────────────────────
-export function registerSocketHandlers(io: AppServer): void {
+// ─── Register ─────────────────────────────────────────────────
+export function registerSocketHandlers(io: AppServer) {
   _io = io;
 
   io.on("connection", (socket: AppSocket) => {
@@ -309,7 +281,7 @@ export function registerSocketHandlers(io: AppServer): void {
       await saveRoom(state);
       socket.join(code);
       socket.emit("room:state", toRoomState(state));
-      scheduleRoomExpiry(io, code);
+      scheduleExpiry(io, code);
       if (
         (state.status === "playing" || state.status === "paused") &&
         state.questionStartedAt
@@ -325,6 +297,8 @@ export function registerSocketHandlers(io: AppServer): void {
           startedAt: state.questionStartedAt,
           round: state.currentRound,
           totalRounds: state.config.rounds,
+          imageUrl: q.imageUrl,
+          difficulty: q.difficulty,
         });
       }
     });
@@ -371,6 +345,8 @@ export function registerSocketHandlers(io: AppServer): void {
           startedAt: state.questionStartedAt,
           round: state.currentRound,
           totalRounds: state.config.rounds,
+          imageUrl: q.imageUrl,
+          difficulty: q.difficulty,
         });
       }
     });
@@ -379,9 +355,8 @@ export function registerSocketHandlers(io: AppServer): void {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
       if (!state) return;
-      for (const [pid, tid] of Object.entries(assignments)) {
+      for (const [pid, tid] of Object.entries(assignments))
         if (state.players[pid]) state.players[pid].teamId = tid as TeamId;
-      }
       state.teams.red.score = 0;
       state.teams.blue.score = 0;
       await saveRoom(state);
@@ -397,7 +372,8 @@ export function registerSocketHandlers(io: AppServer): void {
       state.eliminatedPlayerIds = [];
       state.teams.red.score = 0;
       state.teams.blue.score = 0;
-      assignPowersForRound(state);
+      state.lastQuestionPoints = {};
+      assignPowers(state);
       await saveRoom(state);
       await emitPowers(io, code, state);
       await startQuestion(io, code);
@@ -413,7 +389,7 @@ export function registerSocketHandlers(io: AppServer): void {
         return;
       }
       if (state.status === "revealing") {
-        if (isLastQuestionOfRound(state)) {
+        if (isLastQOfRound(state)) {
           await endRound(io, code);
         } else {
           state.currentQuestionIndex++;
@@ -429,21 +405,19 @@ export function registerSocketHandlers(io: AppServer): void {
         }
         state.currentRound++;
         state.currentQuestionIndex++;
-        assignPowersForRound(state);
+        assignPowers(state);
         await saveRoom(state);
         await emitPowers(io, code, state);
         await startQuestion(io, code);
       }
     });
 
-    // ── Powers ─────────────────────────────────────────────
     socket.on(
       "player:use_power",
       async ({ roomCode, playerId, sessionToken, targetPlayerId }) => {
         const code = roomCode.toUpperCase();
         const state = await getRoom(code);
         if (!state || state.status !== "playing") return;
-
         const attacker = state.players[playerId];
         if (!attacker || attacker.sessionToken !== sessionToken) return;
         if (!attacker.currentPower || attacker.powerUsedThisRound) return;
@@ -453,27 +427,22 @@ export function registerSocketHandlers(io: AppServer): void {
         const isDefense = (DEFENSE_POWERS as readonly string[]).includes(power);
 
         if (isDefense) {
-          applyDefenseEffect(power, attacker);
+          applyDefense(power as PowerType, attacker);
           attacker.currentPower = null;
           attacker.powerUsedThisRound = true;
           await saveRoom(state);
-          socket.emit("power:assigned", { power: "shield" }); // dummy refresh
           io.to(code).emit("room:state", toRoomState(state));
           return;
         }
 
-        // Attack
         const target = state.players[targetPlayerId];
         if (!target || state.eliminatedPlayerIds.includes(targetPlayerId))
           return;
-
-        // Ghost: untargetable
         if (target.ghostActive) {
           socket.emit("power:blocked", { byShield: false, mirrorSent: false });
           return;
         }
 
-        // Shield / Mirror
         if (target.shieldActive) {
           const mirrored = target.mirrorActive;
           target.shieldActive = false;
@@ -481,10 +450,9 @@ export function registerSocketHandlers(io: AppServer): void {
           attacker.currentPower = null;
           attacker.powerUsedThisRound = true;
           if (mirrored) {
-            // Apply attack to the attacker
-            applyAttackEffect(power, attacker, attacker.id);
+            applyAttack(power as PowerType, attacker, attacker.id);
             io.to(code).emit("power:effect", {
-              type: power,
+              type: power as PowerType,
               fromPlayerId: attacker.id,
               fromPseudo: attacker.pseudo,
               targetPlayerId: attacker.id,
@@ -500,14 +468,12 @@ export function registerSocketHandlers(io: AppServer): void {
           return;
         }
 
-        // Apply attack
-        applyAttackEffect(power, target, playerId);
+        applyAttack(power as PowerType, target, playerId);
         attacker.currentPower = null;
         attacker.powerUsedThisRound = true;
         await saveRoom(state);
-
         io.to(code).emit("power:effect", {
-          type: power,
+          type: power as PowerType,
           fromPlayerId: playerId,
           fromPseudo: attacker.pseudo,
           targetPlayerId,
@@ -555,22 +521,21 @@ export function registerSocketHandlers(io: AppServer): void {
     });
 
     socket.on("host:stop", async ({ roomCode }) => {
-      const code = roomCode.toUpperCase();
-      const t = revealTimers.get(code);
+      const t = revealTimers.get(roomCode);
       if (t) {
         clearTimeout(t);
-        revealTimers.delete(code);
+        revealTimers.delete(roomCode);
       }
-      await finishGame(io, code);
+      await finishGame(io, roomCode.toUpperCase());
     });
 
     socket.on("host:leave", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
-      [revealTimers, expiryTimers].forEach((map) => {
-        const t = map.get(code);
+      [revealTimers, expiryTimers].forEach((m) => {
+        const t = m.get(code);
         if (t) {
           clearTimeout(t);
-          map.delete(code);
+          m.delete(code);
         }
       });
       await deleteRoom(code);

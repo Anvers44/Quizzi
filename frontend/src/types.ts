@@ -1,4 +1,3 @@
-// ─── Avatars ────────────────────────────────────────────────
 export type Avatar =
   | "fox"
   | "cat"
@@ -8,7 +7,6 @@ export type Avatar =
   | "panda"
   | "owl"
   | "frog";
-
 export const AVATARS: Avatar[] = [
   "fox",
   "cat",
@@ -19,7 +17,6 @@ export const AVATARS: Avatar[] = [
   "owl",
   "frog",
 ];
-
 export const AVATAR_EMOJI: Record<Avatar, string> = {
   fox: "🦊",
   cat: "🐱",
@@ -31,13 +28,14 @@ export const AVATAR_EMOJI: Record<Avatar, string> = {
   frog: "🐸",
 };
 
-// ─── Modes & config ──────────────────────────────────────────
+export type Difficulty = "easy" | "medium" | "hard";
 export type GameMode = "classic" | "teams" | "tournament";
 export type TeamId = "red" | "blue";
 
 export interface GameConfig {
   mode: GameMode;
-  theme: string;
+  themes: string[]; // multi-theme
+  difficulty: Difficulty | "all";
   rounds: number;
   questionsPerRound: number;
   powersEnabled: boolean;
@@ -49,16 +47,15 @@ export interface Team {
   score: number;
 }
 
-// ─── Powers ─────────────────────────────────────────────────
 export type PowerType =
   | "blind"
   | "freeze"
   | "flip"
-  | "shuffle" // attack
+  | "shuffle"
   | "shield"
   | "double"
   | "mirror"
-  | "ghost"; // defense
+  | "ghost";
 
 export const POWER_LABELS: Record<PowerType, string> = {
   blind: "💥 Aveugle",
@@ -70,34 +67,37 @@ export const POWER_LABELS: Record<PowerType, string> = {
   mirror: "🪞 Miroir",
   ghost: "👻 Fantôme",
 };
-
 export const POWER_DESC: Record<PowerType, string> = {
   blind: "Cache un choix à la cible 8s",
   freeze: "Bloque la cible 4s",
   flip: "Retourne l'écran de la cible 5s",
   shuffle: "Mélange les choix de la cible",
   shield: "Bloque la prochaine attaque",
-  double: "Prochaine bonne réponse × 2 pts",
+  double: "Prochaine bonne réponse × 2",
   mirror: "Renvoie la prochaine attaque",
-  ghost: "Inciblable pendant cette question",
+  ghost: "Inciblable cette question",
 };
 
-// ─── Theme labels ────────────────────────────────────────────
 export const THEME_LABELS: Record<string, string> = {
-  general: "🌍 Culture générale",
+  general: "🌍 Général",
   sport: "⚽ Sport",
   cinema: "🎬 Cinéma",
   music: "🎵 Musique",
   history: "📜 Histoire",
-  geography: "🗺️ Géographie",
+  geography: "🗺️ Géo",
   science: "🔬 Science",
   games: "🎮 Jeux vidéo",
   logos: "🏷️ Logos",
   flags: "🏳️ Drapeaux",
-  all: "🎲 Tous les thèmes",
 };
 
-// ─── Player ─────────────────────────────────────────────────
+export const DIFFICULTY_LABELS: Record<string, string> = {
+  all: "Tous les niveaux",
+  easy: "⭐ Facile",
+  medium: "⭐⭐ Moyen",
+  hard: "⭐⭐⭐ Difficile",
+};
+
 export interface Player {
   id: string;
   sessionToken: string;
@@ -110,7 +110,6 @@ export interface Player {
   teamId?: TeamId;
 }
 
-// ─── Question ───────────────────────────────────────────────
 export interface Question {
   id: string;
   text: string;
@@ -118,9 +117,10 @@ export interface Question {
   correctIndex: number;
   timeLimit: number;
   theme: string;
+  difficulty: Difficulty;
+  imageUrl?: string;
 }
 
-// ─── GameState ──────────────────────────────────────────────
 export type RoomStatus =
   | "lobby"
   | "playing"

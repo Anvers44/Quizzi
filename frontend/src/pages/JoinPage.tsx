@@ -3,7 +3,7 @@ import { apiPost, apiGet } from "../lib/api";
 import { saveSession } from "../lib/session";
 import { loadProfile, saveProfile } from "../lib/profile";
 import { AVATARS, AVATAR_EMOJI } from "../types";
-import type { Avatar } from "../types";
+import type { Avatar, GameConfig } from "../types";
 
 interface Props {
   onJoined: (
@@ -15,14 +15,16 @@ interface Props {
       avatar: Avatar;
     },
   ) => void;
+  onBack: () => void;
 }
 
 interface RoomInfo {
   roomCode: string;
   playerCount: number;
+  config: GameConfig;
 }
 
-export default function JoinPage({ onJoined }: Props) {
+export default function JoinPage({ onJoined, onBack }: Props) {
   const [roomCode, setRoomCode] = useState("");
   const [pseudo, setPseudo] = useState("");
   const [avatar, setAvatar] = useState<Avatar>("fox");
@@ -31,7 +33,6 @@ export default function JoinPage({ onJoined }: Props) {
   const [rooms, setRooms] = useState<RoomInfo[]>([]);
   const [hasProfile, setHasProfile] = useState(false);
 
-  // Pré-remplir depuis le profil sauvegardé
   useEffect(() => {
     const profile = loadProfile();
     if (profile) {
@@ -41,10 +42,9 @@ export default function JoinPage({ onJoined }: Props) {
     }
   }, []);
 
-  // Charger les parties disponibles
   useEffect(() => {
     apiGet<{ rooms: RoomInfo[] }>("/api/rooms/list")
-      .then((data) => setRooms(data.rooms))
+      .then((d) => setRooms(d.rooms))
       .catch(() => {});
   }, []);
 
@@ -59,7 +59,6 @@ export default function JoinPage({ onJoined }: Props) {
       setError("Entre ton pseudo");
       return;
     }
-
     setLoading(true);
     try {
       const res = await apiPost<{
@@ -67,8 +66,6 @@ export default function JoinPage({ onJoined }: Props) {
         sessionToken: string;
         roomCode: string;
       }>(`/api/rooms/${code}/join`, { pseudo: pseudo.trim(), avatar });
-
-      // Sauvegarder / mettre à jour le profil (avatar peut avoir changé)
       const existing = loadProfile();
       saveProfile({
         pseudo: pseudo.trim(),
@@ -77,7 +74,6 @@ export default function JoinPage({ onJoined }: Props) {
         wins: existing?.wins ?? 0,
         totalScore: existing?.totalScore ?? 0,
       });
-
       saveSession({
         roomCode: res.roomCode,
         playerId: res.playerId,
@@ -99,11 +95,27 @@ export default function JoinPage({ onJoined }: Props) {
     }
   }
 
+  const MODE_EMOJI: Record<string, string> = {
+    classic: "🎮",
+    teams: "🤝",
+    tournament: "🏆",
+  };
+
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-start gap-4 p-5 overflow-y-auto">
-      <h1 className="text-3xl font-extrabold text-white mt-2">Rejoindre 📱</h1>
+      {/* Header */}
+      <div className="w-full max-w-xs flex items-center justify-between pt-1">
+        <button
+          onClick={onBack}
+          className="text-indigo-400 hover:text-white font-semibold text-sm transition"
+        >
+          ← Retour
+        </button>
+        <h1 className="text-2xl font-extrabold text-white">Rejoindre 📱</h1>
+        <div className="w-12" />
+      </div>
 
-      {/* Bannière de bienvenue si profil existant */}
+      {/* Bienvenue retour */}
       {hasProfile && (
         <div className="w-full max-w-xs bg-indigo-700/60 border border-indigo-500 rounded-2xl px-4 py-3 flex items-center gap-3">
           <span className="text-3xl">{AVATAR_EMOJI[avatar]}</span>
@@ -124,28 +136,29 @@ export default function JoinPage({ onJoined }: Props) {
           <p className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
             Parties disponibles
           </p>
-          <div className="flex flex-col gap-2">
-            {rooms.map((r) => (
-              <button
-                key={r.roomCode}
-                onClick={() => setRoomCode(r.roomCode)}
-                className={`flex items-center justify-between px-4 py-3 rounded-xl font-bold transition ${
-                  roomCode === r.roomCode
-                    ? "bg-yellow-400 text-indigo-900"
-                    : "bg-indigo-700 text-white active:bg-indigo-600"
-                }`}
-              >
+          {rooms.map((r) => (
+            <button
+              key={r.roomCode}
+              onClick={() => setRoomCode(r.roomCode)}
+              className={`flex items-center justify-between px-4 py-3 rounded-xl font-bold transition ${
+                roomCode === r.roomCode
+                  ? "bg-yellow-400 text-indigo-900"
+                  : "bg-indigo-700 text-white"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span>{MODE_EMOJI[r.config?.mode] ?? ""}</span>
                 <span className="text-lg tracking-widest">{r.roomCode}</span>
-                <span className="text-sm opacity-70">
-                  {r.playerCount} joueur{r.playerCount > 1 ? "s" : ""}
-                </span>
-              </button>
-            ))}
-          </div>
+              </div>
+              <span className="text-sm opacity-70">
+                {r.playerCount} joueur{r.playerCount > 1 ? "s" : ""}
+              </span>
+            </button>
+          ))}
         </div>
       )}
 
-      {/* Code room */}
+      {/* Code */}
       <div className="w-full max-w-xs flex flex-col gap-1">
         <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
           Code de la partie
@@ -185,7 +198,7 @@ export default function JoinPage({ onJoined }: Props) {
             <button
               key={a}
               onClick={() => setAvatar(a)}
-              className={`text-3xl p-2 rounded-xl transition ${avatar === a ? "bg-yellow-400 scale-110" : "bg-indigo-800 active:bg-indigo-700"}`}
+              className={`text-3xl p-2 rounded-xl transition ${avatar === a ? "bg-yellow-400 scale-110" : "bg-indigo-800"}`}
             >
               {AVATAR_EMOJI[a]}
             </button>

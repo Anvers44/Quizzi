@@ -1,9 +1,41 @@
 import { Router } from "express";
 import { getRoom, saveRoom, recordAnswerIfNew } from "../redis/helpers";
-import type { PlayerAnswer } from "../types";
+import type { PlayerAnswer, Difficulty } from "../types";
 import { getIo, checkAllAnswered } from "../socketHandlers";
 
 export const answerRouter = Router();
+
+// ─── Smooth scoring ────────────────────────────────────────────
+const BASE_POINTS: Record<Difficulty, number> = {
+  easy: 600,
+  medium: 1000,
+  hard: 1500,
+};
+const MAX_BONUS: Record<Difficulty, number> = {
+  easy: 200,
+  medium: 400,
+  hard: 600,
+};
+
+function computePoints(
+  correct: boolean,
+  difficulty: Difficulty,
+  timeLimit: number,
+  elapsed: number,
+  doubled: boolean,
+): number {
+  if (!correct) return 0;
+
+  const base = BASE_POINTS[difficulty];
+  const maxBonus = MAX_BONUS[difficulty];
+  const ratio = Math.max(0, Math.min(1, (timeLimit - elapsed) / timeLimit));
+  const rawBonus = Math.round(maxBonus * ratio);
+  const rawTotal = base + rawBonus;
+
+  // Round to nearest 50 → clean numbers like 650, 700, 850...
+  const rounded = Math.round(rawTotal / 50) * 50;
+  return doubled ? rounded * 2 : rounded;
+}
 
 answerRouter.post("/:roomCode/answer", async (req, res) => {
   const roomCode = req.params.roomCode.toUpperCase();
@@ -31,7 +63,7 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
   if (!question || question.id !== questionId)
     return res.status(400).json({ error: "Question incorrecte" });
 
-  // Check freeze
+  // Freeze check
   if (player.frozenUntil && Date.now() < player.frozenUntil)
     return res.status(400).json({ error: "Tu es gelé !", frozen: true });
 
@@ -39,19 +71,16 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
   const elapsed = state.questionStartedAt
     ? (Date.now() - state.questionStartedAt) / 1000
     : question.timeLimit;
-  const timeBonus = correct
-    ? Math.round(
-        500 * Math.max(0, (question.timeLimit - elapsed) / question.timeLimit),
-      )
-    : 0;
 
-  let points = correct ? 1000 + timeBonus : 0;
+  const points = computePoints(
+    correct,
+    question.difficulty,
+    question.timeLimit,
+    elapsed,
+    player.doubleNextAnswer && correct,
+  );
 
-  // Double power
-  if (correct && player.doubleNextAnswer) {
-    points *= 2;
-    player.doubleNextAnswer = false;
-  }
+  if (correct && player.doubleNextAnswer) player.doubleNextAnswer = false;
 
   const answer: PlayerAnswer = {
     playerId,
@@ -74,7 +103,11 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
   if (!player.answers) player.answers = {};
   player.answers[questionId] = choiceIndex;
 
-  // Team score update
+  // Track points this question (for reveal display)
+  if (!state.lastQuestionPoints) state.lastQuestionPoints = {};
+  state.lastQuestionPoints[playerId] = points;
+
+  // Team scoring
   if (state.config.mode === "teams" && player.teamId) {
     state.teams[player.teamId].score += points;
   }
@@ -85,9 +118,8 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     const io = getIo();
     if (io) {
       io.to(roomCode).emit("player:answered", { playerId, choiceIndex });
-      if (state.config.mode === "teams") {
+      if (state.config.mode === "teams")
         io.to(roomCode).emit("team:update", { teams: state.teams });
-      }
     }
   } catch {}
 
@@ -96,5 +128,5 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     if (io) await checkAllAnswered(io, roomCode, questionId);
   } catch {}
 
-  return res.json({ correct: false, points: 0, score: player.score });
+  return res.json({ correct, points, score: player.score });
 });

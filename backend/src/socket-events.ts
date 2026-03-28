@@ -1,4 +1,4 @@
-import type { GameState, Player, PowerType, TeamId } from "./types";
+import type { GameConfig, GameState, Player, PowerType, TeamId } from "./types";
 
 export interface PublicPlayer {
   id: string;
@@ -9,14 +9,13 @@ export interface PublicPlayer {
   teamId?: TeamId;
   currentPower?: PowerType | null;
   isEliminated?: boolean;
-  // active effect types visible to everyone
   activeEffectTypes?: PowerType[];
 }
 
 export interface RoomStatePayload {
   roomCode: string;
   status: GameState["status"];
-  config: GameState["config"];
+  config: GameConfig;
   players: PublicPlayer[];
   currentQuestionIndex: number;
   currentRound: number;
@@ -34,6 +33,8 @@ export interface QuestionPayload {
   startedAt: number;
   round: number;
   totalRounds: number;
+  imageUrl?: string; // ← for flag/image questions
+  difficulty: "easy" | "medium" | "hard";
 }
 
 export interface RevealPayload {
@@ -42,6 +43,7 @@ export interface RevealPayload {
   scores: PublicPlayer[];
   playerAnswers: Record<string, number>;
   teams: GameState["teams"];
+  pointsEarned: Record<string, number>; // ← playerId → pts this question
 }
 
 export interface RoundEndPayload {
@@ -49,7 +51,7 @@ export interface RoundEndPayload {
   totalRounds: number;
   scores: PublicPlayer[];
   teams: GameState["teams"];
-  eliminatedPlayerId?: string; // tournament
+  eliminatedPlayerId?: string;
   eliminatedPseudo?: string;
 }
 
@@ -60,21 +62,15 @@ export interface FinishedPayload {
   winnerTeamId?: TeamId;
 }
 
-export interface PowerAssignedPayload {
-  power: PowerType;
-}
-
 export interface PowerEffectPayload {
   type: PowerType;
   fromPlayerId: string;
   fromPseudo: string;
-  // blind: which index to hide
+  targetPlayerId: string;
   hiddenChoiceIndex?: number;
-  // shuffle: new order
   newChoiceOrder?: number[];
 }
 
-// ─── Client → Server ────────────────────────────────────────
 export interface ClientToServerEvents {
   "host:join": (d: { roomCode: string }) => void;
   "player:join": (d: {
@@ -105,10 +101,9 @@ export interface ClientToServerEvents {
   }) => void;
 }
 
-// ─── Server → Client ────────────────────────────────────────
 export interface ServerToClientEvents {
-  "room:state": (state: RoomStatePayload) => void;
-  "player:joined": (player: PublicPlayer) => void;
+  "room:state": (s: RoomStatePayload) => void;
+  "player:joined": (p: PublicPlayer) => void;
   "player:disconnected": (d: { playerId: string }) => void;
   "player:reconnected": (d: { playerId: string }) => void;
   "player:answered": (d: { playerId: string; choiceIndex: number }) => void;
@@ -121,7 +116,7 @@ export interface ServerToClientEvents {
   "game:round_end": (d: RoundEndPayload) => void;
   "game:finished": (d: FinishedPayload) => void;
   "team:update": (d: { teams: GameState["teams"] }) => void;
-  "power:assigned": (d: PowerAssignedPayload) => void;
+  "power:assigned": (d: { power: PowerType }) => void;
   "power:effect": (d: PowerEffectPayload) => void;
   "power:blocked": (d: { byShield: boolean; mirrorSent: boolean }) => void;
   error: (d: { message: string }) => void;

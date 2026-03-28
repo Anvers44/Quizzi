@@ -5,159 +5,148 @@ import HostLobby from "./pages/HostLobby";
 import HostGame from "./pages/HostGame";
 import JoinPage from "./pages/JoinPage";
 import PlayerScreen from "./pages/PlayerScreen";
+import StatsPage from "./pages/StatsPage";
 import { loadSession, clearSession } from "./lib/session";
-import { apiPost } from "./lib/api";
-import type { Avatar } from "./types";
+import { apiGet } from "./lib/api";
+import type { GameConfig, Avatar } from "./types";
 
 type Screen =
-  | "boot"
   | "home"
   | "host-create"
   | "host-lobby"
   | "host-game"
   | "join"
-  | "player";
-
-interface PlayerInfo {
-  playerId: string;
-  sessionToken: string;
-  pseudo: string;
-  avatar: Avatar;
-}
+  | "player"
+  | "stats";
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("boot");
+  const [screen, setScreen] = useState<Screen>("home");
   const [roomCode, setRoomCode] = useState("");
-  const [playerInfo, setPlayerInfo] = useState<PlayerInfo | null>(null);
   const [gameConfig, setGameConfig] = useState<GameConfig | null>(null);
+  const [playerId, setPlayerId] = useState("");
+  const [sessionToken, setSessionToken] = useState("");
+  const [pseudo, setPseudo] = useState("");
+  const [avatar, setAvatar] = useState<Avatar>("fox");
 
+  // Restore session on mount
   useEffect(() => {
-    async function restore() {
-      const session = loadSession();
-      if (!session) {
-        setScreen("home");
-        return;
-      }
+    const session = loadSession();
+    if (!session) return;
 
-      if (session.role === "host") {
-        setRoomCode(session.roomCode);
-        try {
-          const room = await apiGet<{ status: string }>(
-            `/api/rooms/${session.roomCode}`,
-          );
-          if (
-            room.status === "playing" ||
-            room.status === "paused" ||
-            room.status === "revealing"
-          ) {
-            setScreen("host-game");
-          } else if (room.status === "finished") {
-            clearSession();
-            setScreen("home");
-          } else {
-            setScreen("host-lobby");
-          }
-        } catch {
-          clearSession();
-          setScreen("home");
-        }
-        return;
-      }
-
-      try {
-        const res = await apiPost<{
-          playerId: string;
-          sessionToken: string;
-          roomCode: string;
-          pseudo: string;
-          avatar: Avatar;
-          status: string;
-        }>(`/api/rooms/${session.roomCode}/rejoin`, {
-          playerId: session.playerId,
-          sessionToken: session.sessionToken,
-        });
-        setRoomCode(res.roomCode);
-        setPlayerInfo({
-          playerId: res.playerId,
-          sessionToken: res.sessionToken,
-          pseudo: res.pseudo,
-          avatar: res.avatar,
-        });
-        setScreen("player");
-      } catch {
-        clearSession();
-        setScreen("home");
-      }
+    if (session.role === "host") {
+      // Verify room still exists before restoring
+      apiGet(`/api/rooms/${session.roomCode}`)
+        .then((data: any) => {
+          setRoomCode(session.roomCode);
+          if (data.config) setGameConfig(data.config);
+          if (data.status === "lobby") setScreen("host-lobby");
+          else if (data.status !== "finished") setScreen("host-game");
+          else clearSession();
+        })
+        .catch(() => clearSession());
+    } else if (session.role === "player") {
+      setRoomCode(session.roomCode);
+      setPlayerId(session.playerId ?? "");
+      setSessionToken(session.sessionToken ?? "");
+      setPseudo(session.pseudo ?? "");
+      setAvatar((session.avatar as Avatar) ?? "fox");
+      setScreen("player");
     }
-    restore();
   }, []);
 
-  function goHome() {
-    setRoomCode("");
-    setPlayerInfo(null);
-    setScreen("home");
+  // ── Handlers ──────────────────────────────────────────────
+  function handleRoomCreated(code: string, config: GameConfig) {
+    setRoomCode(code);
+    setGameConfig(config);
+    setScreen("host-lobby");
   }
 
-  if (screen === "boot") {
-    return (
-      <div className="h-[100dvh] bg-indigo-900 flex items-center justify-center">
-        <p className="text-indigo-300 text-lg animate-pulse">Chargement…</p>
-      </div>
-    );
+  function handlePlayerJoined(
+    code: string,
+    info: {
+      playerId: string;
+      sessionToken: string;
+      pseudo: string;
+      avatar: Avatar;
+    },
+  ) {
+    setRoomCode(code);
+    setPlayerId(info.playerId);
+    setSessionToken(info.sessionToken);
+    setPseudo(info.pseudo);
+    setAvatar(info.avatar);
+    setScreen("player");
   }
-  if (screen === "home")
-    return (
-      <HomePage
-        onHost={() => setScreen("host-create")}
-        onPlayer={() => setScreen("join")}
-      />
-    );
-  if (screen === "host-create")
+
+  function goHome() {
+    clearSession();
+    setScreen("home");
+    setRoomCode("");
+    setGameConfig(null);
+    setPlayerId("");
+    setSessionToken("");
+  }
+
+  // ── Render ─────────────────────────────────────────────────
+  if (screen === "stats") {
+    return <StatsPage onBack={() => setScreen("home")} />;
+  }
+
+  if (screen === "host-create") {
     return (
       <HostPage
-        onRoomCreated={(code, config) => {
-          setRoomCode(code);
-          setGameConfig(config);
-          setScreen("host-lobby");
-        }}
+        onBack={() => setScreen("home")}
+        onRoomCreated={handleRoomCreated}
       />
     );
-  if (screen === "host-lobby")
+  }
+
+  if (screen === "host-lobby" && gameConfig) {
     return (
       <HostLobby
         roomCode={roomCode}
-        config={gameConfig!}
+        config={gameConfig}
         onLeave={goHome}
         onStart={() => setScreen("host-game")}
       />
     );
-  if (screen === "host-game")
+  }
+
+  if (screen === "host-game" && gameConfig) {
     return (
-      <HostGame roomCode={roomCode} config={gameConfig!} onLeave={goHome} />
+      <HostGame roomCode={roomCode} config={gameConfig} onLeave={goHome} />
     );
+  }
+
   if (screen === "join") {
     return (
       <JoinPage
-        onJoined={(code, info) => {
-          setRoomCode(code);
-          setPlayerInfo(info);
-          setScreen("player");
-        }}
+        onBack={() => setScreen("home")}
+        onJoined={handlePlayerJoined}
       />
     );
   }
-  if (screen === "player" && playerInfo) {
+
+  if (screen === "player") {
     return (
       <PlayerScreen
         roomCode={roomCode}
-        playerId={playerInfo.playerId}
-        sessionToken={playerInfo.sessionToken}
-        pseudo={playerInfo.pseudo}
-        avatar={playerInfo.avatar}
+        playerId={playerId}
+        sessionToken={sessionToken}
+        pseudo={pseudo}
+        avatar={avatar}
         onLeave={goHome}
         onRoomClosed={goHome}
       />
     );
   }
-  return null;
+
+  // Default: home
+  return (
+    <HomePage
+      onHost={() => setScreen("host-create")}
+      onJoin={() => setScreen("join")}
+      onStats={() => setScreen("stats")}
+    />
+  );
 }

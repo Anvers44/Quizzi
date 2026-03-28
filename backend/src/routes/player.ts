@@ -59,6 +59,7 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
     ghostActive: false,
     frozenUntil: null,
     activeEffects: [],
+    pendingEffects: [],
   };
 
   state.players[playerId] = player;

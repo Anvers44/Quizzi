@@ -1,4 +1,3 @@
-// ─── Avatars ────────────────────────────────────────────────
 export type Avatar =
   | "fox"
   | "cat"
@@ -8,7 +7,6 @@ export type Avatar =
   | "panda"
   | "owl"
   | "frog";
-
 export const AVATARS: Avatar[] = [
   "fox",
   "cat",
@@ -19,20 +17,16 @@ export const AVATARS: Avatar[] = [
   "owl",
   "frog",
 ];
-
-// ─── Powers ─────────────────────────────────────────────────
+export type Difficulty = "easy" | "medium" | "hard";
 export type PowerType =
-  // attack
-  | "blind" // cache un choix aléatoire pendant 8 s
-  | "freeze" // bloque la cible 4 s
-  | "flip" // retourne l'écran 5 s
-  | "shuffle" // mélange les choix
-  // defense
-  | "shield" // bloque la prochaine attaque
-  | "double" // prochaine bonne réponse × 2
-  | "mirror" // renvoie la prochaine attaque
-  | "ghost"; // inciblable cette question
-
+  | "blind"
+  | "freeze"
+  | "flip"
+  | "shuffle"
+  | "shield"
+  | "double"
+  | "mirror"
+  | "ghost";
 export const ATTACK_POWERS: PowerType[] = [
   "blind",
   "freeze",
@@ -46,34 +40,32 @@ export const DEFENSE_POWERS: PowerType[] = [
   "ghost",
 ];
 export const ALL_POWERS: PowerType[] = [...ATTACK_POWERS, ...DEFENSE_POWERS];
-
 export interface ActiveEffect {
   type: PowerType;
-  expiresAt: number; // timestamp ms
+  expiresAt: number;
   fromPlayerId: string;
 }
-
-// ─── Game config ────────────────────────────────────────────
+export interface PendingEffect {
+  type: PowerType;
+  fromPlayerId: string;
+  duration: number;
+  expiresAt: number;
+}
 export type GameMode = "classic" | "teams" | "tournament";
-
 export interface GameConfig {
   mode: GameMode;
-  theme: string; // theme key or "all"
-  rounds: number; // 1-5 (tournament: auto-computed)
-  questionsPerRound: number; // 5, 7, 10
+  themes: string[];
+  difficulty: Difficulty | "all";
+  rounds: number;
+  questionsPerRound: number;
   powersEnabled: boolean;
 }
-
-// ─── Teams ──────────────────────────────────────────────────
 export type TeamId = "red" | "blue";
-
 export interface Team {
   id: TeamId;
   name: string;
   score: number;
 }
-
-// ─── Player ─────────────────────────────────────────────────
 export interface Player {
   id: string;
   sessionToken: string;
@@ -83,31 +75,18 @@ export interface Player {
   score: number;
   connected: boolean;
   answeredQuestions: string[];
-  answers: Record<string, number>; // questionId -> choiceIndex
-  // Mode teams
+  answers: Record<string, number>;
   teamId?: TeamId;
-  // Powers
   currentPower: PowerType | null;
   powerUsedThisRound: boolean;
   shieldActive: boolean;
   mirrorActive: boolean;
   doubleNextAnswer: boolean;
   ghostActive: boolean;
-  frozenUntil: number | null; // timestamp
+  frozenUntil: number | null;
   activeEffects: ActiveEffect[];
+  pendingEffects: PendingEffect[];
 }
-
-// ─── Question ───────────────────────────────────────────────
-export interface Question {
-  id: string;
-  text: string;
-  choices: string[];
-  correctIndex: number;
-  timeLimit: number;
-  theme: string;
-}
-
-// ─── Answer ─────────────────────────────────────────────────
 export interface PlayerAnswer {
   playerId: string;
   questionId: string;
@@ -116,31 +95,36 @@ export interface PlayerAnswer {
   correct: boolean;
   points: number;
 }
-
-// ─── GameState ──────────────────────────────────────────────
 export type RoomStatus =
   | "lobby"
   | "playing"
   | "paused"
   | "revealing"
-  | "round_end" // between rounds — show summary
+  | "round_end"
   | "finished";
-
 export interface GameState {
   roomCode: string;
   hostSocketId: string;
   status: RoomStatus;
   config: GameConfig;
   players: Record<string, Player>;
-  questions: Question[]; // flat list for the whole game
-  currentQuestionIndex: number; // absolute index in `questions`
+  questions: Question[];
+  currentQuestionIndex: number;
   questionStartedAt: number | null;
   pausedAt: number | null;
   timeElapsedBeforePause: number;
-  // Rounds
-  currentRound: number; // 1-based
-  // Tournament
+  currentRound: number;
   eliminatedPlayerIds: string[];
-  // Teams
   teams: Record<TeamId, Team>;
+  lastQuestionPoints: Record<string, number>;
+}
+export interface Question {
+  id: string;
+  text: string;
+  choices: string[];
+  correctIndex: number;
+  timeLimit: number;
+  theme: string;
+  difficulty: Difficulty;
+  imageUrl?: string;
 }

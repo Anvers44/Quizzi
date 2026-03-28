@@ -1,3 +1,192 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Screen transitions ─────────────────────────────────── */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes fadeInFast {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes popIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  70% {
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* Timer pulse when < 5s */
+@keyframes timerPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.15);
+  }
+}
+/* Score pop-in */
+@keyframes scorePop {
+  0% {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.7);
+  }
+  60% {
+    transform: translateY(4px) scale(1.1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+/* Shake for wrong answer */
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}
+/* Power badge bounce */
+@keyframes powerBounce {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-4px) scale(1.05);
+  }
+}
+/* Freeze shimmer */
+@keyframes iceShimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+/* ── Utility classes ────────────────────────────────────── */
+.animate-fadeIn {
+  animation: fadeIn 0.35s ease both;
+}
+.animate-fadeInFast {
+  animation: fadeInFast 0.2s ease both;
+}
+.animate-slideDown {
+  animation: slideDown 0.28s ease both;
+}
+.animate-slideUp {
+  animation: slideUp 0.3s ease both;
+}
+.animate-scaleIn {
+  animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.animate-popIn {
+  animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.animate-timerPulse {
+  animation: timerPulse 0.6s ease-in-out infinite;
+}
+.animate-scorePop {
+  animation: scorePop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.animate-shake {
+  animation: shake 0.4s ease both;
+}
+.animate-powerBounce {
+  animation: powerBounce 2s ease-in-out infinite;
+}
+
+/* Stagger helpers */
+.delay-100 {
+  animation-delay: 0.1s;
+}
+.delay-200 {
+  animation-delay: 0.2s;
+}
+.delay-300 {
+  animation-delay: 0.3s;
+}
+.delay-400 {
+  animation-delay: 0.4s;
+}
+
+/* Flip effect (CSS, not Tailwind transform) */
+.flip-180 {
+  transform: rotate(180deg) !important;
+  transition: transform 0.35s ease;
+}
+
+/* Freeze glass overlay */
+.freeze-overlay {
+  background: linear-gradient(
+    135deg,
+    rgba(96, 165, 250, 0.25),
+    rgba(147, 197, 253, 0.15)
+  );
+  backdrop-filter: blur(3px);
+}
