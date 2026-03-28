@@ -27,7 +27,8 @@ export interface Player {
   score: number;
   connected: boolean;
   answeredQuestions: string[];
-  answers: Record<string, number>; // questionId → choiceIndex
+  // choiceIndex par questionId — pour afficher "qui a répondu quoi" sur le host
+  answers: Record<string, number>;
 }
 
 export interface Question {
@@ -69,6 +70,7 @@ export interface GameState {
   questions: Question[];
   currentQuestionIndex: number;
   questionStartedAt: number | null;
-  pausedAt: number | null;
-  timeElapsedBeforePause: number;
+  // Pause
+  pausedAt: number | null; // timestamp quand mis en pause
+  timeElapsedBeforePause: number; // secondes déjà écoulées avant la pause
 }

@@ -4,7 +4,6 @@ import HostPage from "./pages/HostPage";
 import HostLobby from "./pages/HostLobby";
 import HostGame from "./pages/HostGame";
 import JoinPage from "./pages/JoinPage";
-import { resetSocket } from "./lib/socket";
 import PlayerScreen from "./pages/PlayerScreen";
 import { loadSession, clearSession } from "./lib/session";
 import { apiPost } from "./lib/api";
@@ -74,7 +73,6 @@ export default function App() {
   }, []);
 
   function goHome() {
-    resetSocket();
     setRoomCode("");
     setPlayerInfo(null);
     setScreen("home");
@@ -108,14 +106,11 @@ export default function App() {
       <HostLobby
         roomCode={roomCode}
         onLeave={goHome}
-        onStart={() => {
-          resetSocket();
-          setScreen("host-game");
-        }}
+        onStart={() => setScreen("host-game")}
       />
     );
   if (screen === "host-game")
-    return <HostGame roomCode={roomCode} onLeave={goHome} autoStart={true} />;
+    return <HostGame roomCode={roomCode} onLeave={goHome} />;
   if (screen === "join") {
     return (
       <JoinPage
@@ -123,17 +118,6 @@ export default function App() {
           setRoomCode(code);
           setPlayerInfo(info);
           setScreen("player");
-        }}
-      />
-    );
-  }
-  if (screen === "player-lobby" && playerInfo) {
-    return (
-      <PlayerLobby
-        // ...
-        onGameStart={() => {
-          resetSocket(); // ← reset avant de changer d'écran
-          setScreen("player-game");
         }}
       />
     );

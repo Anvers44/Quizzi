@@ -1,11 +1,16 @@
-import { redis } from './client';
-import { keys, ROOM_TTL_SECONDS } from './keys';
-import type { GameState, PlayerAnswer } from '../types';
+import { redis } from "./client";
+import { keys, ROOM_TTL_SECONDS } from "./keys";
+import type { GameState, PlayerAnswer } from "../types";
 
 // ─── GameState ───────────────────────────────────────────────
 
 export async function saveRoom(state: GameState): Promise<void> {
-  await redis.set(keys.room(state.roomCode), JSON.stringify(state), 'EX', ROOM_TTL_SECONDS);
+  await redis.set(
+    keys.room(state.roomCode),
+    JSON.stringify(state),
+    "EX",
+    ROOM_TTL_SECONDS,
+  );
 }
 
 export async function getRoom(roomCode: string): Promise<GameState | null> {
@@ -24,7 +29,7 @@ export async function deleteRoom(roomCode: string): Promise<void> {
 
 export async function recordAnswerIfNew(
   answer: PlayerAnswer,
-  roomCode: string
+  roomCode: string,
 ): Promise<boolean> {
   const key = keys.answer(roomCode, answer.questionId, answer.playerId);
 
@@ -32,10 +37,10 @@ export async function recordAnswerIfNew(
   const result = await redis.set(
     key,
     JSON.stringify(answer),
-    'EX',
+    "EX",
     ROOM_TTL_SECONDS,
-    'NX'
+    "NX",
   );
 
-  return result === 'OK'; // 'OK' = écrit, null = déjà existant
+  return result === "OK"; // 'OK' = écrit, null = déjà existant
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { getSocket } from "../lib/socket";
 import type {
   RoomStatePayload,
@@ -53,9 +53,6 @@ export function useRoom({
   const [pausedTimeLeft, setPausedTimeLeft] = useState(0);
   const [liveAnswers, setLiveAnswers] = useState<Record<string, number>>({});
 
-  // FIX: ref pour éviter le double-join si socket déjà connecté + event 'connect' déclenché
-  const joinedRef = useRef(false);
-
   const leave = useCallback(() => {
     const s = getSocket();
     if (role === "host") s.emit("host:leave", { roomCode });
@@ -79,18 +76,17 @@ export function useRoom({
     () => getSocket().emit("host:resume", { roomCode }),
     [roomCode],
   );
-  const stopGame = useCallback(() => {
-    if (!roomCode) return;
-    getSocket().emit("host:stop", { roomCode });
-  }, [roomCode]);
+  const stopGame = useCallback(
+    () => getSocket().emit("host:stop", { roomCode }),
+    [roomCode],
+  );
 
   useEffect(() => {
     const socket = getSocket();
-    joinedRef.current = false; // reset à chaque montage
 
+    // FIX : si le socket est déjà connecté (cas "nouvelle partie sans refresh"),
+    // on émet immédiatement le join — sinon on attend l'événement 'connect'.
     function joinRoom() {
-      if (joinedRef.current) return; // évite le double-join
-      joinedRef.current = true;
       if (role === "host") {
         socket.emit("host:join", { roomCode });
       } else if (playerId && sessionToken) {
@@ -106,7 +102,6 @@ export function useRoom({
 
     function onDisconnect() {
       setConnected(false);
-      joinedRef.current = false; // permet un re-join après reconnexion
     }
 
     function onRoomState(p: RoomStatePayload) {
@@ -231,7 +226,7 @@ export function useRoom({
     socket.on("game:finished", onGameFinished);
     socket.on("error", onError);
 
-    // FIX principal : join immédiat si déjà connecté, sinon on attend 'connect'
+    // FIX : socket déjà connecté → join immédiat, pas besoin d'attendre 'connect'
     if (socket.connected) {
       setConnected(true);
       joinRoom();
