@@ -4,8 +4,8 @@ import HostPage from "./pages/HostPage";
 import HostLobby from "./pages/HostLobby";
 import HostGame from "./pages/HostGame";
 import JoinPage from "./pages/JoinPage";
-import PlayerLobby from "./pages/PlayerLobby";
-import PlayerGame from "./pages/PlayerGame";
+import { resetSocket } from "./lib/socket";
+import PlayerScreen from "./pages/PlayerScreen";
 import { loadSession, clearSession } from "./lib/session";
 import { apiPost } from "./lib/api";
 import type { Avatar } from "./types";
@@ -17,8 +17,7 @@ type Screen =
   | "host-lobby"
   | "host-game"
   | "join"
-  | "player-lobby"
-  | "player-game";
+  | "player";
 
 interface PlayerInfo {
   playerId: string;
@@ -65,8 +64,7 @@ export default function App() {
           pseudo: res.pseudo,
           avatar: res.avatar,
         });
-        if (res.status === "lobby") setScreen("player-lobby");
-        else setScreen("player-game");
+        setScreen("player");
       } catch {
         clearSession();
         setScreen("home");
@@ -76,6 +74,7 @@ export default function App() {
   }, []);
 
   function goHome() {
+    resetSocket();
     setRoomCode("");
     setPlayerInfo(null);
     setScreen("home");
@@ -83,20 +82,19 @@ export default function App() {
 
   if (screen === "boot") {
     return (
-      <div className="min-h-screen bg-indigo-900 flex items-center justify-center">
+      <div className="h-[100dvh] bg-indigo-900 flex items-center justify-center">
         <p className="text-indigo-300 text-lg animate-pulse">Chargement…</p>
       </div>
     );
   }
-  if (screen === "home") {
+  if (screen === "home")
     return (
       <HomePage
         onHost={() => setScreen("host-create")}
         onPlayer={() => setScreen("join")}
       />
     );
-  }
-  if (screen === "host-create") {
+  if (screen === "host-create")
     return (
       <HostPage
         onRoomCreated={(code) => {
@@ -105,26 +103,26 @@ export default function App() {
         }}
       />
     );
-  }
-  if (screen === "host-lobby") {
+  if (screen === "host-lobby")
     return (
       <HostLobby
         roomCode={roomCode}
         onLeave={goHome}
-        onStart={() => setScreen("host-game")}
+        onStart={() => {
+          resetSocket();
+          setScreen("host-game");
+        }}
       />
     );
-  }
-  if (screen === "host-game") {
-    return <HostGame roomCode={roomCode} onLeave={goHome} />;
-  }
+  if (screen === "host-game")
+    return <HostGame roomCode={roomCode} onLeave={goHome} autoStart={true} />;
   if (screen === "join") {
     return (
       <JoinPage
         onJoined={(code, info) => {
           setRoomCode(code);
           setPlayerInfo(info);
-          setScreen("player-lobby");
+          setScreen("player");
         }}
       />
     );
@@ -132,20 +130,17 @@ export default function App() {
   if (screen === "player-lobby" && playerInfo) {
     return (
       <PlayerLobby
-        roomCode={roomCode}
-        playerId={playerInfo.playerId}
-        sessionToken={playerInfo.sessionToken}
-        pseudo={playerInfo.pseudo}
-        avatar={playerInfo.avatar}
-        onLeave={goHome}
-        onRoomClosed={goHome}
-        onGameStart={() => setScreen("player-game")}
+        // ...
+        onGameStart={() => {
+          resetSocket(); // ← reset avant de changer d'écran
+          setScreen("player-game");
+        }}
       />
     );
   }
-  if (screen === "player-game" && playerInfo) {
+  if (screen === "player" && playerInfo) {
     return (
-      <PlayerGame
+      <PlayerScreen
         roomCode={roomCode}
         playerId={playerInfo.playerId}
         sessionToken={playerInfo.sessionToken}

@@ -20,3 +20,11 @@ export function getSocket(): AppSocket {
   }
   return socket;
 }
+
+export function resetSocket(): void {
+  if (socket) {
+    socket.disconnect();
+    socket.removeAllListeners();
+    socket = null;
+  }
+}

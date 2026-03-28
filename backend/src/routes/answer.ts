@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { getRoom, saveRoom, recordAnswerIfNew } from "../redis/helpers";
 import type { PlayerAnswer } from "../types";
+import { getIo, checkAllAnswered } from "../socketHandlers";
 
 export const answerRouter = Router();
 
-// POST /api/rooms/:roomCode/answer
 answerRouter.post("/:roomCode/answer", async (req, res) => {
   const roomCode = req.params.roomCode.toUpperCase();
   const { playerId, sessionToken, questionId, choiceIndex } = req.body as {
@@ -14,26 +14,22 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     choiceIndex?: number;
   };
 
-  if (!playerId || !sessionToken || !questionId || choiceIndex === undefined) {
+  if (!playerId || !sessionToken || !questionId || choiceIndex === undefined)
     return res.status(400).json({ error: "Paramètres manquants" });
-  }
 
   const state = await getRoom(roomCode);
   if (!state) return res.status(404).json({ error: "Room introuvable" });
 
   const player = state.players[playerId];
-  if (!player || player.sessionToken !== sessionToken) {
+  if (!player || player.sessionToken !== sessionToken)
     return res.status(401).json({ error: "Session invalide" });
-  }
 
-  if (state.status !== "playing") {
+  if (state.status !== "playing")
     return res.status(400).json({ error: "Aucune question en cours" });
-  }
 
   const question = state.questions[state.currentQuestionIndex];
-  if (!question || question.id !== questionId) {
+  if (!question || question.id !== questionId)
     return res.status(400).json({ error: "Question incorrecte" });
-  }
 
   const correct = choiceIndex === question.correctIndex;
   const elapsed = state.questionStartedAt
@@ -55,19 +51,31 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     points,
   };
 
-  // Anti double-soumission — Redis SET NX
   const recorded = await recordAnswerIfNew(answer, roomCode);
-  if (!recorded) {
+  if (!recorded)
     return res
       .status(409)
       .json({ error: "Réponse déjà envoyée", alreadyAnswered: true });
-  }
 
   player.score += points;
-  if (!player.answeredQuestions.includes(questionId)) {
+  if (!player.answeredQuestions.includes(questionId))
     player.answeredQuestions.push(questionId);
-  }
+  if (!player.answers) player.answers = {};
+  player.answers[questionId] = choiceIndex;
   await saveRoom(state);
 
-  return res.json({ correct, points, score: player.score });
+  // Broadcast "joueur a répondu" au host (sans révéler si correct)
+  try {
+    const io = getIo();
+    if (io) io.to(roomCode).emit("player:answered", { playerId, choiceIndex });
+  } catch {}
+
+  // Auto-reveal si tout le monde a répondu
+  try {
+    const io = getIo();
+    if (io) await checkAllAnswered(io, roomCode, questionId);
+  } catch {}
+
+  return res.json({ correct: false, points: 0, score: player.score });
+  // On ne révèle pas correct/points ici — sera dans le reveal socket event
 });

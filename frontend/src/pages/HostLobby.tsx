@@ -26,7 +26,7 @@ export default function HostLobby({ roomCode, onLeave, onStart }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-indigo-900 flex flex-col items-center justify-center gap-8 p-6">
+    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-6 p-6 overflow-hidden">
       <div className="w-full max-w-2xl flex justify-between items-center">
         <div
           className={`text-xs px-3 py-1 rounded-full font-semibold ${connected ? "bg-green-500/20 text-green-300" : "bg-red-500/20 text-red-300"}`}
@@ -43,11 +43,11 @@ export default function HostLobby({ roomCode, onLeave, onStart }: Props) {
 
       <h1 className="text-3xl font-bold text-white">En attente de joueurs…</h1>
 
-      <div className="bg-white rounded-3xl px-16 py-10 flex flex-col items-center gap-3 shadow-2xl">
+      <div className="bg-white rounded-3xl px-12 py-8 flex flex-col items-center gap-2 shadow-2xl">
         <p className="text-indigo-400 text-sm font-semibold uppercase tracking-widest">
           Code de la partie
         </p>
-        <p className="text-7xl font-extrabold text-indigo-900 tracking-widest">
+        <p className="text-6xl font-extrabold text-indigo-900 tracking-widest">
           {roomCode}
         </p>
         <p className="text-indigo-400 text-sm">Rejoins depuis ton appareil</p>
@@ -60,7 +60,7 @@ export default function HostLobby({ roomCode, onLeave, onStart }: Props) {
       </div>
 
       {players.length > 0 && (
-        <div className="flex flex-wrap gap-4 justify-center max-w-2xl">
+        <div className="flex flex-wrap gap-3 justify-center max-w-2xl">
           {players.map((p) => (
             <div
               key={p.id}

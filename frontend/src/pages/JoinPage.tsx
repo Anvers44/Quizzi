@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { apiPost } from "../lib/api";
+import { useState, useEffect } from "react";
+import { apiPost, apiGet } from "../lib/api";
 import { saveSession } from "../lib/session";
 import { AVATARS, AVATAR_EMOJI } from "../types";
 import type { Avatar } from "../types";
@@ -16,12 +16,25 @@ interface Props {
   ) => void;
 }
 
+interface RoomInfo {
+  roomCode: string;
+  playerCount: number;
+}
+
 export default function JoinPage({ onJoined }: Props) {
   const [roomCode, setRoomCode] = useState("");
   const [pseudo, setPseudo] = useState("");
   const [avatar, setAvatar] = useState<Avatar>("fox");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [rooms, setRooms] = useState<RoomInfo[]>([]);
+
+  // Charger les parties disponibles
+  useEffect(() => {
+    apiGet<{ rooms: RoomInfo[] }>("/api/rooms/list")
+      .then((data) => setRooms(data.rooms))
+      .catch(() => {});
+  }, []);
 
   async function handleJoin() {
     setError("");
@@ -64,11 +77,39 @@ export default function JoinPage({ onJoined }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-indigo-900 flex flex-col items-center justify-center gap-6 p-6">
-      <h1 className="text-4xl font-extrabold text-white">Rejoindre 📱</h1>
+    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-start gap-4 p-5 overflow-y-auto">
+      <h1 className="text-3xl font-extrabold text-white mt-2">Rejoindre 📱</h1>
 
+      {/* Parties disponibles */}
+      {rooms.length > 0 && (
+        <div className="w-full max-w-xs flex flex-col gap-2">
+          <p className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
+            Parties disponibles
+          </p>
+          <div className="flex flex-col gap-2">
+            {rooms.map((r) => (
+              <button
+                key={r.roomCode}
+                onClick={() => setRoomCode(r.roomCode)}
+                className={`flex items-center justify-between px-4 py-3 rounded-xl font-bold transition ${
+                  roomCode === r.roomCode
+                    ? "bg-yellow-400 text-indigo-900"
+                    : "bg-indigo-700 text-white active:bg-indigo-600"
+                }`}
+              >
+                <span className="text-lg tracking-widest">{r.roomCode}</span>
+                <span className="text-sm opacity-70">
+                  {r.playerCount} joueur{r.playerCount > 1 ? "s" : ""}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Code room */}
       <div className="w-full max-w-xs flex flex-col gap-1">
-        <label className="text-indigo-300 text-sm font-semibold">
+        <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
           Code de la partie
         </label>
         <input
@@ -81,8 +122,9 @@ export default function JoinPage({ onJoined }: Props) {
         />
       </div>
 
+      {/* Pseudo */}
       <div className="w-full max-w-xs flex flex-col gap-1">
-        <label className="text-indigo-300 text-sm font-semibold">
+        <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
           Ton pseudo
         </label>
         <input
@@ -95,20 +137,17 @@ export default function JoinPage({ onJoined }: Props) {
         />
       </div>
 
+      {/* Avatar */}
       <div className="w-full max-w-xs flex flex-col gap-2">
-        <label className="text-indigo-300 text-sm font-semibold">
-          Ton avatar
+        <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
+          Avatar
         </label>
         <div className="grid grid-cols-4 gap-2">
           {AVATARS.map((a) => (
             <button
               key={a}
               onClick={() => setAvatar(a)}
-              className={`text-3xl p-2 rounded-xl transition ${
-                avatar === a
-                  ? "bg-yellow-400 scale-110"
-                  : "bg-indigo-800 hover:bg-indigo-700"
-              }`}
+              className={`text-3xl p-2 rounded-xl transition ${avatar === a ? "bg-yellow-400 scale-110" : "bg-indigo-800 active:bg-indigo-700"}`}
             >
               {AVATAR_EMOJI[a]}
             </button>
@@ -125,7 +164,7 @@ export default function JoinPage({ onJoined }: Props) {
       <button
         onClick={handleJoin}
         disabled={loading}
-        className="bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-indigo-900 font-bold text-xl px-10 py-4 rounded-2xl shadow-lg transition w-full max-w-xs"
+        className="bg-yellow-400 active:bg-yellow-300 disabled:opacity-50 text-indigo-900 font-bold text-xl px-10 py-4 rounded-2xl shadow-lg w-full max-w-xs mb-4"
       >
         {loading ? "Connexion…" : "Rejoindre"}
       </button>

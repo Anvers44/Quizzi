@@ -10,7 +10,7 @@ export interface PublicPlayer {
 
 export interface RoomStatePayload {
   roomCode: string;
-  status: "lobby" | "playing" | "revealing" | "finished";
+  status: "lobby" | "playing" | "paused" | "revealing" | "finished";
   players: PublicPlayer[];
   currentQuestionIndex: number;
 }
@@ -29,6 +29,7 @@ export interface RevealPayload {
   questionId: string;
   correctIndex: number;
   scores: PublicPlayer[];
+  playerAnswers: Record<string, number>; // playerId → choiceIndex
 }
 
 export interface FinishedPayload {
@@ -36,31 +37,37 @@ export interface FinishedPayload {
 }
 
 export interface ClientToServerEvents {
-  "host:join": (data: { roomCode: string }) => void;
-  "player:join": (data: {
+  "host:join": (d: { roomCode: string }) => void;
+  "player:join": (d: {
     roomCode: string;
     playerId: string;
     sessionToken: string;
   }) => void;
-  "host:leave": (data: { roomCode: string }) => void;
-  "player:leave": (data: {
+  "host:leave": (d: { roomCode: string }) => void;
+  "player:leave": (d: {
     roomCode: string;
     playerId: string;
     sessionToken: string;
   }) => void;
-  "host:start": (data: { roomCode: string }) => void;
-  "host:next": (data: { roomCode: string }) => void;
+  "host:start": (d: { roomCode: string }) => void;
+  "host:next": (d: { roomCode: string }) => void;
+  "host:pause": (d: { roomCode: string }) => void;
+  "host:resume": (d: { roomCode: string }) => void;
+  "host:stop": (d: { roomCode: string }) => void;
 }
 
 export interface ServerToClientEvents {
   "room:state": (state: RoomStatePayload) => void;
   "player:joined": (player: PublicPlayer) => void;
-  "player:disconnected": (data: { playerId: string }) => void;
-  "player:reconnected": (data: { playerId: string }) => void;
+  "player:disconnected": (d: { playerId: string }) => void;
+  "player:reconnected": (d: { playerId: string }) => void;
+  "player:answered": (d: { playerId: string; choiceIndex: number }) => void;
   "room:closed": () => void;
-  "player:kicked": (data: { playerId: string }) => void;
-  "question:start": (data: QuestionPayload) => void;
-  "question:reveal": (data: RevealPayload) => void;
-  "game:finished": (data: FinishedPayload) => void;
-  error: (data: { message: string }) => void;
+  "player:kicked": (d: { playerId: string }) => void;
+  "question:start": (d: QuestionPayload) => void;
+  "question:reveal": (d: RevealPayload) => void;
+  "game:paused": (d: { timeLeft: number }) => void;
+  "game:resumed": (d: { startedAt: number }) => void;
+  "game:finished": (d: FinishedPayload) => void;
+  error: (d: { message: string }) => void;
 }

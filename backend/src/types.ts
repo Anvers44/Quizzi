@@ -1,5 +1,22 @@
-export type Avatar = 'fox' | 'cat' | 'dog' | 'rabbit' | 'bear' | 'panda' | 'owl' | 'frog';
-export const AVATARS: Avatar[] = ['fox', 'cat', 'dog', 'rabbit', 'bear', 'panda', 'owl', 'frog'];
+export type Avatar =
+  | "fox"
+  | "cat"
+  | "dog"
+  | "rabbit"
+  | "bear"
+  | "panda"
+  | "owl"
+  | "frog";
+export const AVATARS: Avatar[] = [
+  "fox",
+  "cat",
+  "dog",
+  "rabbit",
+  "bear",
+  "panda",
+  "owl",
+  "frog",
+];
 
 export interface Player {
   id: string;
@@ -10,8 +27,7 @@ export interface Player {
   score: number;
   connected: boolean;
   answeredQuestions: string[];
-  // choiceIndex par questionId — pour afficher "qui a répondu quoi" sur le host
-  answers: Record<string, number>;
+  answers: Record<string, number>; // questionId → choiceIndex
 }
 
 export interface Question {
@@ -38,7 +54,12 @@ export interface ScoreEntry {
   score: number;
 }
 
-export type RoomStatus = 'lobby' | 'playing' | 'paused' | 'revealing' | 'finished';
+export type RoomStatus =
+  | "lobby"
+  | "playing"
+  | "paused"
+  | "revealing"
+  | "finished";
 
 export interface GameState {
   roomCode: string;
@@ -48,7 +69,6 @@ export interface GameState {
   questions: Question[];
   currentQuestionIndex: number;
   questionStartedAt: number | null;
-  // Pause
-  pausedAt: number | null;           // timestamp quand mis en pause
-  timeElapsedBeforePause: number;    // secondes déjà écoulées avant la pause
+  pausedAt: number | null;
+  timeElapsedBeforePause: number;
 }

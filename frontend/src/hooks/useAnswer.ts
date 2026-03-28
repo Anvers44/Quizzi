@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { apiPost } from "../lib/api";
 import { loadSession } from "../lib/session";
+import { vibrate } from "../lib/sound";
 
 interface AnswerResult {
   correct: boolean;
@@ -46,6 +47,8 @@ export function useAnswer(): UseAnswerReturn {
       });
       setResult(res);
       setStatus("sent");
+      // Vibration confirmation de réponse
+      vibrate([80, 40, 80]);
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes("déjà")) {
