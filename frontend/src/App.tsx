@@ -40,7 +40,26 @@ export default function App() {
 
       if (session.role === "host") {
         setRoomCode(session.roomCode);
-        setScreen("host-lobby");
+        try {
+          const room = await apiGet<{ status: string }>(
+            `/api/rooms/${session.roomCode}`,
+          );
+          if (
+            room.status === "playing" ||
+            room.status === "paused" ||
+            room.status === "revealing"
+          ) {
+            setScreen("host-game");
+          } else if (room.status === "finished") {
+            clearSession();
+            setScreen("home");
+          } else {
+            setScreen("host-lobby");
+          }
+        } catch {
+          clearSession();
+          setScreen("home");
+        }
         return;
       }
 

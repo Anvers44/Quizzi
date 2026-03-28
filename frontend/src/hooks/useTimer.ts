@@ -6,12 +6,6 @@ export function useTimer(
   timeLimit: number,
   paused?: boolean,
 ): number {
-  const calc = () => {
-    if (paused) return null; // signal "ne pas recalculer"
-    const elapsed = (Date.now() - startedAt) / 1000;
-    return Math.max(0, Math.ceil(timeLimit - elapsed));
-  };
-
   const [timeLeft, setTimeLeft] = useState(() => {
     const elapsed = (Date.now() - startedAt) / 1000;
     return Math.max(0, Math.ceil(timeLimit - elapsed));

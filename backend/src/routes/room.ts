@@ -27,6 +27,8 @@ roomRouter.post("/", async (_req, res) => {
       questions: QUESTIONS,
       currentQuestionIndex: 0,
       questionStartedAt: null,
+      pausedAt: null, // ← ajouter
+      timeElapsedBeforePause: 0, // ← ajouter
     };
     await saveRoom(state);
 

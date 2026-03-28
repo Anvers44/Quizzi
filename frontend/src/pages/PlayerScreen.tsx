@@ -3,6 +3,7 @@ import { useRoom } from "../hooks/useRoom";
 import { useAnswer } from "../hooks/useAnswer";
 import { useTimer } from "../hooks/useTimer";
 import { clearSession } from "../lib/session";
+import { loadProfile, updateStats } from "../lib/profile";
 import { AVATAR_EMOJI } from "../types";
 import { playTickBeep, vibrate } from "../lib/sound";
 import Scoreboard from "../components/Scoreboard";
@@ -48,6 +49,45 @@ function ConnBadge({ connected }: { connected: boolean }) {
   );
 }
 
+// ── Stats mini-badge ──────────────────────────────────────────────────────────
+function StatsBadge() {
+  const profile = loadProfile();
+  if (!profile || profile.gamesPlayed === 0) return null;
+
+  const winRate =
+    profile.gamesPlayed > 0
+      ? Math.round((profile.wins / profile.gamesPlayed) * 100)
+      : 0;
+
+  return (
+    <div className="w-full max-w-sm bg-indigo-800/60 border border-indigo-600 rounded-2xl px-4 py-3">
+      <p className="text-indigo-400 text-xs uppercase tracking-widest mb-2 font-semibold">
+        Mes stats
+      </p>
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-white font-extrabold text-xl">
+            {profile.gamesPlayed}
+          </span>
+          <span className="text-indigo-400 text-xs">Parties</span>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-yellow-400 font-extrabold text-xl">
+            {profile.wins}
+          </span>
+          <span className="text-indigo-400 text-xs">Victoires</span>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-green-400 font-extrabold text-xl">
+            {winRate}%
+          </span>
+          <span className="text-indigo-400 text-xs">Ratio wins</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Lobby ─────────────────────────────────────────────────────────────────────
 function Lobby({
   roomCode,
@@ -59,7 +99,7 @@ function Lobby({
   onLeave,
 }: any) {
   return (
-    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-6 p-6 overflow-hidden">
+    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6 overflow-y-auto">
       <div className="w-full max-w-sm flex justify-between items-center">
         <div
           className={`text-xs px-3 py-1 rounded-full font-semibold ${connected ? "bg-green-500/20 text-green-300" : "bg-red-500/20 text-red-300 animate-pulse"}`}
@@ -73,8 +113,10 @@ function Lobby({
           ✕ Quitter
         </button>
       </div>
+
       <div className="text-6xl">{AVATAR_EMOJI[avatar]}</div>
       <h1 className="text-2xl font-extrabold text-white">{pseudo}</h1>
+
       <div className="bg-indigo-800 rounded-2xl px-8 py-3 flex flex-col items-center gap-1">
         <p className="text-indigo-400 text-xs uppercase tracking-widest">
           Partie
@@ -83,9 +125,14 @@ function Lobby({
           {roomCode}
         </p>
       </div>
+
       <p className="text-indigo-300 text-base animate-pulse">
         En attente du début…
       </p>
+
+      {/* Stats du joueur en attendant */}
+      <StatsBadge />
+
       {players.length > 1 && (
         <div className="flex flex-wrap gap-2 justify-center max-w-xs">
           {players
@@ -118,7 +165,6 @@ function QuestionScreen({ roomCode, question, paused, pausedTimeLeft }: any) {
   const answered = status === "sent" || status === "already";
   const lastBeep = useRef(-1);
 
-  // Son + vibration sur les 5 dernières secondes
   useEffect(() => {
     if (
       !paused &&
@@ -198,7 +244,6 @@ function QuestionScreen({ roomCode, question, paused, pausedTimeLeft }: any) {
 }
 
 // ── Reveal ────────────────────────────────────────────────────────────────────
-// Affiche la bonne réponse + qui a voté quoi
 function RevealScreen({ reveal, question, playerId, pseudo, avatar }: any) {
   const sorted = [...reveal.scores].sort((a: any, b: any) => b.score - a.score);
   const myRank = sorted.findIndex((p: any) => p.id === playerId) + 1;
@@ -209,7 +254,6 @@ function RevealScreen({ reveal, question, playerId, pseudo, avatar }: any) {
 
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-start gap-3 p-5 overflow-y-auto">
-      {/* Mon résultat */}
       <div
         className={`w-full max-w-sm rounded-2xl px-5 py-3 flex items-center gap-3 mt-2 ${didAnswer ? (wasCorrect ? "bg-green-500/20 border border-green-400" : "bg-red-500/20 border border-red-400") : "bg-indigo-700"}`}
       >
@@ -232,13 +276,11 @@ function RevealScreen({ reveal, question, playerId, pseudo, avatar }: any) {
         </div>
       </div>
 
-      {/* Affichage des réponses avec qui a voté quoi */}
       {question && (
         <div className="w-full max-w-sm flex flex-col gap-2">
           {question.choices.map((choice: string, i: number) => {
             const isCorrect = i === reveal.correctIndex;
             const iMyChoice = myChoice === i;
-            // Joueurs ayant voté pour ce choix
             const voters = reveal.scores.filter(
               (p: any) => reveal.playerAnswers?.[p.id] === i,
             );
@@ -296,10 +338,14 @@ function FinishedScreen({ scores, playerId, pseudo, avatar, onLeave }: any) {
   const myScore = scores.find((p: any) => p.id === playerId)?.score ?? 0;
   const MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
 
+  // Charger les stats mises à jour (updateStats a déjà été appelé)
+  const profile = loadProfile();
+
   return (
-    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-6 p-6 overflow-hidden">
+    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6 overflow-y-auto">
       <div className="text-6xl">{MEDALS[myRank] ?? AVATAR_EMOJI[avatar]}</div>
       <h1 className="text-3xl font-extrabold text-white">Partie terminée !</h1>
+
       <div className="bg-indigo-800 rounded-2xl px-8 py-3 flex flex-col items-center gap-1">
         <p className="text-indigo-400 text-xs uppercase tracking-widest">
           {pseudo}
@@ -307,9 +353,40 @@ function FinishedScreen({ scores, playerId, pseudo, avatar, onLeave }: any) {
         <p className="text-3xl font-extrabold text-yellow-400">{myScore} pts</p>
         <p className="text-indigo-300 text-sm">#{myRank} au classement</p>
       </div>
-      <div className="w-full max-w-sm overflow-y-auto max-h-64">
+
+      {/* Stats cumulées */}
+      {profile && profile.gamesPlayed > 0 && (
+        <div className="w-full max-w-sm bg-indigo-700/60 border border-indigo-500 rounded-2xl px-4 py-3">
+          <p className="text-indigo-400 text-xs uppercase tracking-widest mb-2 font-semibold text-center">
+            Mes stats au total
+          </p>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-white font-extrabold text-xl">
+                {profile.gamesPlayed}
+              </span>
+              <span className="text-indigo-400 text-xs">Parties</span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-yellow-400 font-extrabold text-xl">
+                {profile.wins}
+              </span>
+              <span className="text-indigo-400 text-xs">Victoires</span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-green-400 font-extrabold text-xl">
+                {profile.totalScore}
+              </span>
+              <span className="text-indigo-400 text-xs">Score total</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="w-full max-w-sm overflow-y-auto max-h-52">
         <Scoreboard players={scores} currentPlayerId={playerId} />
       </div>
+
       <button
         onClick={onLeave}
         className="bg-indigo-600 active:bg-indigo-500 text-white font-bold text-lg px-10 py-3 rounded-2xl shadow-lg"
@@ -330,6 +407,8 @@ export default function PlayerScreen({
   onLeave,
   onRoomClosed,
 }: Props) {
+  const statsUpdated = useRef(false);
+
   const {
     state,
     connected,
@@ -342,6 +421,20 @@ export default function PlayerScreen({
     pausedTimeLeft,
     leave,
   } = useRoom({ role: "player", roomCode, playerId, sessionToken });
+
+  // Mise à jour des stats une seule fois quand la partie se termine
+  useEffect(() => {
+    if (!finished || statsUpdated.current) return;
+    statsUpdated.current = true;
+
+    const scores = finished.scores;
+    const sorted = [...scores].sort((a, b) => b.score - a.score);
+    const myRank = sorted.findIndex((p) => p.id === playerId) + 1;
+    const myScore = scores.find((p) => p.id === playerId)?.score ?? 0;
+    const isWin = myRank === 1;
+
+    updateStats(myScore, isWin);
+  }, [finished, playerId]);
 
   useEffect(() => {
     if (roomClosed || kicked) {

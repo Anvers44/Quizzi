@@ -179,6 +179,22 @@ export function registerSocketHandlers(io: AppServer) {
       await saveRoom(state);
       socket.join(code);
       socket.emit("room:state", toRoomState(state));
+      // Re-envoie la question en cours si le jeu tourne déjà
+      if (
+        (state.status === "playing" || state.status === "paused") &&
+        state.questionStartedAt
+      ) {
+        const q = state.questions[state.currentQuestionIndex];
+        socket.emit("question:start", {
+          id: q.id,
+          text: q.text,
+          choices: q.choices,
+          timeLimit: q.timeLimit,
+          index: state.currentQuestionIndex,
+          total: state.questions.length,
+          startedAt: state.questionStartedAt,
+        });
+      }
       scheduleRoomExpiry(io, code);
     });
 
@@ -192,6 +208,22 @@ export function registerSocketHandlers(io: AppServer) {
       const player = state.players[playerId];
       if (!player || player.sessionToken !== sessionToken) {
         socket.emit("error", { message: "Session invalide" });
+        // Re-envoie la question en cours si le jeu tourne déjà
+        if (
+          (state.status === "playing" || state.status === "paused") &&
+          state.questionStartedAt
+        ) {
+          const q = state.questions[state.currentQuestionIndex];
+          socket.emit("question:start", {
+            id: q.id,
+            text: q.text,
+            choices: q.choices,
+            timeLimit: q.timeLimit,
+            index: state.currentQuestionIndex,
+            total: state.questions.length,
+            startedAt: state.questionStartedAt,
+          });
+        }
         return;
       }
       const isReconnection = player.connected;

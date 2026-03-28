@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { apiPost, apiGet } from "../lib/api";
 import { saveSession } from "../lib/session";
+import { loadProfile, saveProfile } from "../lib/profile";
 import { AVATARS, AVATAR_EMOJI } from "../types";
 import type { Avatar } from "../types";
 
@@ -28,6 +29,17 @@ export default function JoinPage({ onJoined }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [rooms, setRooms] = useState<RoomInfo[]>([]);
+  const [hasProfile, setHasProfile] = useState(false);
+
+  // Pré-remplir depuis le profil sauvegardé
+  useEffect(() => {
+    const profile = loadProfile();
+    if (profile) {
+      setPseudo(profile.pseudo);
+      setAvatar(profile.avatar);
+      setHasProfile(true);
+    }
+  }, []);
 
   // Charger les parties disponibles
   useEffect(() => {
@@ -55,6 +67,17 @@ export default function JoinPage({ onJoined }: Props) {
         sessionToken: string;
         roomCode: string;
       }>(`/api/rooms/${code}/join`, { pseudo: pseudo.trim(), avatar });
+
+      // Sauvegarder / mettre à jour le profil (avatar peut avoir changé)
+      const existing = loadProfile();
+      saveProfile({
+        pseudo: pseudo.trim(),
+        avatar,
+        gamesPlayed: existing?.gamesPlayed ?? 0,
+        wins: existing?.wins ?? 0,
+        totalScore: existing?.totalScore ?? 0,
+      });
+
       saveSession({
         roomCode: res.roomCode,
         playerId: res.playerId,
@@ -79,6 +102,21 @@ export default function JoinPage({ onJoined }: Props) {
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-start gap-4 p-5 overflow-y-auto">
       <h1 className="text-3xl font-extrabold text-white mt-2">Rejoindre 📱</h1>
+
+      {/* Bannière de bienvenue si profil existant */}
+      {hasProfile && (
+        <div className="w-full max-w-xs bg-indigo-700/60 border border-indigo-500 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <span className="text-3xl">{AVATAR_EMOJI[avatar]}</span>
+          <div className="flex flex-col">
+            <span className="text-white font-bold text-sm">
+              Bon retour, {pseudo} !
+            </span>
+            <span className="text-indigo-300 text-xs">
+              Tu peux changer ton avatar ci-dessous
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Parties disponibles */}
       {rooms.length > 0 && (
