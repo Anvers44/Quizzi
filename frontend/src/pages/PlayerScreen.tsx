@@ -1,13 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRoom } from "../hooks/useRoom";
 import { useAnswer } from "../hooks/useAnswer";
 import { useTimer } from "../hooks/useTimer";
 import { clearSession } from "../lib/session";
 import { loadProfile, updateStats } from "../lib/profile";
-import { AVATAR_EMOJI } from "../types";
+import { AVATAR_EMOJI, POWER_LABELS, POWER_DESC } from "../types";
 import { playTickBeep, vibrate } from "../lib/sound";
 import Scoreboard from "../components/Scoreboard";
-import type { Avatar } from "../types";
+import type { Avatar, TeamId, PowerType } from "../types";
+import type { PublicPlayer } from "../socket-events";
 
 interface Props {
   roomCode: string;
@@ -39,6 +40,11 @@ const COLORS_DIM = [
 ];
 const SHAPES = ["▲", "◆", "●", "■"];
 
+const TEAM_BADGES: Record<TeamId, string> = {
+  red: "bg-red-500/20 border border-red-400 text-red-300",
+  blue: "bg-blue-500/20 border border-blue-400 text-blue-300",
+};
+
 function ConnBadge({ connected }: { connected: boolean }) {
   return (
     <div
@@ -49,46 +55,117 @@ function ConnBadge({ connected }: { connected: boolean }) {
   );
 }
 
-// ── Stats mini-badge ──────────────────────────────────────────────────────────
-function StatsBadge() {
-  const profile = loadProfile();
-  if (!profile || profile.gamesPlayed === 0) return null;
+// ─── Power overlay (visual effects) ─────────────────────────
+interface EffectState {
+  flip: boolean;
+  freeze: boolean;
+  blind: number | null; // hidden choice index
+  shuffle: number[] | null; // new order
+}
 
-  const winRate =
-    profile.gamesPlayed > 0
-      ? Math.round((profile.wins / profile.gamesPlayed) * 100)
-      : 0;
+function usePowerEffects(powerEffect: any, playerId: string): EffectState {
+  const [effects, setEffects] = useState<EffectState>({
+    flip: false,
+    freeze: false,
+    blind: null,
+    shuffle: null,
+  });
+
+  useEffect(() => {
+    if (!powerEffect || powerEffect.targetPlayerId !== playerId) return;
+    const t = powerEffect.type as PowerType;
+    if (t === "flip") {
+      setEffects((e) => ({ ...e, flip: true }));
+      setTimeout(() => setEffects((e) => ({ ...e, flip: false })), 5000);
+    } else if (t === "freeze") {
+      setEffects((e) => ({ ...e, freeze: true }));
+      setTimeout(() => setEffects((e) => ({ ...e, freeze: false })), 4000);
+    } else if (t === "blind") {
+      setEffects((e) => ({
+        ...e,
+        blind: powerEffect.hiddenChoiceIndex ?? null,
+      }));
+      setTimeout(() => setEffects((e) => ({ ...e, blind: null })), 8000);
+    } else if (t === "shuffle") {
+      setEffects((e) => ({
+        ...e,
+        shuffle: powerEffect.newChoiceOrder ?? null,
+      }));
+      setTimeout(() => setEffects((e) => ({ ...e, shuffle: null })), 6000);
+    }
+  }, [powerEffect, playerId]);
+
+  return effects;
+}
+
+// ─── Power button ────────────────────────────────────────────
+function PowerPanel({
+  myPower,
+  players,
+  playerId,
+  onUsePower,
+}: {
+  myPower: PowerType | null;
+  players: PublicPlayer[];
+  playerId: string;
+  onUsePower: (targetId: string) => void;
+}) {
+  const [targeting, setTargeting] = useState(false);
+  if (!myPower) return null;
+
+  const isAttack = ["blind", "freeze", "flip", "shuffle"].includes(myPower);
+  const targets = isAttack
+    ? players.filter((p) => p.id !== playerId && p.connected && !p.isEliminated)
+    : [];
+
+  if (targeting && isAttack) {
+    return (
+      <div className="w-full max-w-sm bg-indigo-800 border border-yellow-400 rounded-2xl p-3">
+        <p className="text-yellow-400 text-sm font-bold mb-2 text-center">
+          Choisir une cible :
+        </p>
+        <div className="flex flex-wrap gap-2 justify-center mb-2">
+          {targets.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => {
+                onUsePower(p.id);
+                setTargeting(false);
+              }}
+              className="flex items-center gap-2 bg-indigo-700 active:bg-indigo-600 text-white px-3 py-2 rounded-xl font-semibold text-sm"
+            >
+              <span>{AVATAR_EMOJI[p.avatar]}</span>
+              <span>{p.pseudo}</span>
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => setTargeting(false)}
+          className="w-full text-indigo-400 text-xs"
+        >
+          Annuler
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="w-full max-w-sm bg-indigo-800/60 border border-indigo-600 rounded-2xl px-4 py-3">
-      <p className="text-indigo-400 text-xs uppercase tracking-widest mb-2 font-semibold">
-        Mes stats
-      </p>
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-white font-extrabold text-xl">
-            {profile.gamesPlayed}
-          </span>
-          <span className="text-indigo-400 text-xs">Parties</span>
+    <div className="w-full max-w-sm">
+      <button
+        onClick={() => (isAttack ? setTargeting(true) : onUsePower(playerId))}
+        className="w-full bg-purple-600 active:bg-purple-500 text-white font-bold rounded-2xl px-4 py-3 flex items-center gap-3"
+      >
+        <div className="text-left flex-1">
+          <p className="text-base">{POWER_LABELS[myPower]}</p>
+          <p className="text-xs opacity-70">{POWER_DESC[myPower]}</p>
         </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-yellow-400 font-extrabold text-xl">
-            {profile.wins}
-          </span>
-          <span className="text-indigo-400 text-xs">Victoires</span>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-green-400 font-extrabold text-xl">
-            {winRate}%
-          </span>
-          <span className="text-indigo-400 text-xs">Ratio wins</span>
-        </div>
-      </div>
+        <span className="text-2xl">{isAttack ? "⚔️" : "🛡️"}</span>
+      </button>
     </div>
   );
 }
 
-// ── Lobby ─────────────────────────────────────────────────────────────────────
+// ─── Lobby ───────────────────────────────────────────────────
 function Lobby({
   roomCode,
   playerId,
@@ -96,8 +173,14 @@ function Lobby({
   avatar,
   players,
   connected,
+  teams,
+  config,
   onLeave,
 }: any) {
+  const profile = loadProfile();
+  const myTeamId = players.find((p: any) => p.id === playerId)?.teamId as
+    | TeamId
+    | undefined;
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6 overflow-y-auto">
       <div className="w-full max-w-sm flex justify-between items-center">
@@ -117,6 +200,14 @@ function Lobby({
       <div className="text-6xl">{AVATAR_EMOJI[avatar]}</div>
       <h1 className="text-2xl font-extrabold text-white">{pseudo}</h1>
 
+      {myTeamId && (
+        <div
+          className={`px-4 py-2 rounded-xl text-sm font-bold ${TEAM_BADGES[myTeamId]}`}
+        >
+          {myTeamId === "red" ? "🔴 Équipe Rouge" : "🔵 Équipe Bleue"}
+        </div>
+      )}
+
       <div className="bg-indigo-800 rounded-2xl px-8 py-3 flex flex-col items-center gap-1">
         <p className="text-indigo-400 text-xs uppercase tracking-widest">
           Partie
@@ -124,72 +215,131 @@ function Lobby({
         <p className="text-2xl font-bold text-white tracking-widest">
           {roomCode}
         </p>
+        <p className="text-indigo-400 text-xs">
+          {config?.mode === "teams"
+            ? "Mode Équipes"
+            : config?.mode === "tournament"
+              ? "Mode Tournoi"
+              : "Mode Classique"}
+          {config?.powersEnabled ? " · ⚡ Pouvoirs" : ""}
+        </p>
       </div>
 
       <p className="text-indigo-300 text-base animate-pulse">
         En attente du début…
       </p>
 
-      {/* Stats du joueur en attendant */}
-      <StatsBadge />
-
-      {players.length > 1 && (
-        <div className="flex flex-wrap gap-2 justify-center max-w-xs">
-          {players
-            .filter((p: any) => p.id !== playerId)
-            .map((p: any) => (
-              <div
-                key={p.id}
-                className={`flex items-center gap-2 px-3 py-2 rounded-xl ${p.connected ? "bg-indigo-700" : "opacity-40 bg-indigo-900"}`}
-              >
-                <span className="text-lg">{AVATAR_EMOJI[p.avatar]}</span>
-                <span className="text-white text-sm font-semibold">
-                  {p.pseudo}
-                </span>
-              </div>
-            ))}
+      {profile && profile.gamesPlayed > 0 && (
+        <div className="w-full max-w-sm bg-indigo-800/60 border border-indigo-600 rounded-2xl px-4 py-3">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div>
+              <p className="text-white font-extrabold text-lg">
+                {profile.gamesPlayed}
+              </p>
+              <p className="text-indigo-400 text-xs">Parties</p>
+            </div>
+            <div>
+              <p className="text-yellow-400 font-extrabold text-lg">
+                {profile.wins}
+              </p>
+              <p className="text-indigo-400 text-xs">Victoires</p>
+            </div>
+            <div>
+              <p className="text-green-400 font-extrabold text-lg">
+                {profile.totalScore}
+              </p>
+              <p className="text-indigo-400 text-xs">Score total</p>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// ── Question ──────────────────────────────────────────────────────────────────
-function QuestionScreen({ roomCode, question, paused, pausedTimeLeft }: any) {
+// ─── Question screen ─────────────────────────────────────────
+function QuestionScreen({
+  roomCode,
+  question,
+  paused,
+  pausedTimeLeft,
+  myPower,
+  powerEffect,
+  players,
+  playerId,
+  sessionToken,
+  onUsePower,
+}: any) {
   const timeLeft = useTimer(question.startedAt, question.timeLimit, paused);
-  const displayTime = paused ? pausedTimeLeft : timeLeft;
-  const pct = Math.max(0, (displayTime / question.timeLimit) * 100);
+  const display = paused ? pausedTimeLeft : timeLeft;
+  const pct = Math.max(0, (display / question.timeLimit) * 100);
   const timerColor =
     pct > 50 ? "bg-green-400" : pct > 20 ? "bg-yellow-400" : "bg-red-500";
   const { status, submitAnswer } = useAnswer();
   const answered = status === "sent" || status === "already";
   const lastBeep = useRef(-1);
+  const effects = usePowerEffects(powerEffect, playerId);
 
   useEffect(() => {
     if (
       !paused &&
-      displayTime <= 5 &&
-      displayTime > 0 &&
-      displayTime !== lastBeep.current
+      display <= 5 &&
+      display > 0 &&
+      display !== lastBeep.current
     ) {
-      lastBeep.current = displayTime;
+      lastBeep.current = display;
       playTickBeep();
       vibrate(50);
     }
-  }, [displayTime, paused]);
+  }, [display, paused]);
+
+  // Shuffle choices
+  const displayChoices = effects.shuffle
+    ? effects.shuffle.map((i) => ({ text: question.choices[i], origIndex: i }))
+    : question.choices.map((t: string, i: number) => ({
+        text: t,
+        origIndex: i,
+      }));
+
+  const wrapperStyle = effects.flip
+    ? { transform: "rotate(180deg)", transition: "transform 0.3s" }
+    : {};
 
   return (
-    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-between p-4 overflow-hidden">
+    <div
+      className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-between p-4 overflow-hidden"
+      style={wrapperStyle}
+    >
+      {/* Freeze overlay */}
+      {effects.freeze && (
+        <div className="absolute inset-0 bg-blue-500/30 backdrop-blur-sm z-40 flex items-center justify-center rounded-lg pointer-events-none">
+          <div className="text-center">
+            <p className="text-6xl">❄️</p>
+            <p className="text-white font-bold text-xl">Gelé !</p>
+          </div>
+        </div>
+      )}
+
+      {/* Attacked notification */}
+      {powerEffect && powerEffect.targetPlayerId === playerId && (
+        <div className="w-full max-w-sm bg-red-500/20 border border-red-400 rounded-xl px-3 py-2 text-center text-sm text-red-300 font-semibold">
+          ⚔️ {powerEffect.fromPseudo} t'a utilisé{" "}
+          {POWER_LABELS[powerEffect.type as PowerType]}!
+        </div>
+      )}
+
+      {/* Timer */}
       <div className="w-full max-w-sm pt-2">
         <div className="flex justify-between text-indigo-300 text-sm mb-1">
           <span>
-            Q{question.index + 1}/{question.total}
+            M{question.round}/{question.totalRounds} · Q
+            {(question.index % 99) + 1}
           </span>
           <span
-            className={`font-bold tabular-nums ${displayTime <= 5 && !paused ? "text-red-400 animate-pulse" : "text-white"}`}
+            className={`font-bold tabular-nums ${display <= 5 && !paused ? "text-red-400 animate-pulse" : "text-white"}`}
           >
             {paused ? "⏸ " : ""}
-            {displayTime}s
+            {display}s
           </span>
         </div>
         <div className="w-full bg-indigo-800 rounded-full h-3 overflow-hidden">
@@ -212,59 +362,124 @@ function QuestionScreen({ roomCode, question, paused, pausedTimeLeft }: any) {
         </p>
       </div>
 
+      {/* Status */}
       <div className="w-full max-w-sm min-h-8 flex items-center justify-center">
         {answered && !paused && (
           <p className="text-indigo-300 text-sm font-semibold text-center">
-            ⏳ Réponse envoyée — résultat à la fin du compte à rebours
+            ⏳ Réponse envoyée
           </p>
-        )}
-        {status === "sending" && (
-          <p className="text-indigo-400 text-sm animate-pulse">Envoi…</p>
         )}
         {status === "error" && (
           <p className="text-red-400 text-sm">Erreur — réessaie</p>
         )}
       </div>
 
+      {/* Power button */}
+      {myPower && !answered && (
+        <PowerPanel
+          myPower={myPower}
+          players={players}
+          playerId={playerId}
+          onUsePower={onUsePower}
+        />
+      )}
+
+      {/* Choices */}
       <div className="grid grid-cols-2 gap-2 w-full max-w-sm pb-2">
-        {question.choices.map((choice: string, i: number) => (
-          <button
-            key={i}
-            disabled={answered || status === "sending" || paused}
-            onClick={() => submitAnswer(roomCode, question.id, i)}
-            className={`${answered ? COLORS_SENT[i] + " opacity-60" : paused ? COLORS_SENT[i] + " opacity-50" : COLORS[i]} disabled:cursor-not-allowed text-white font-bold rounded-2xl px-3 py-4 text-left transition flex flex-col gap-1 select-none`}
-          >
-            <span className="text-xl">{SHAPES[i]}</span>
-            <span className="text-xs leading-tight">{choice}</span>
-          </button>
-        ))}
+        {displayChoices.map(
+          (
+            { text, origIndex }: { text: string; origIndex: number },
+            displayI: number,
+          ) => {
+            const isHidden = effects.blind === origIndex;
+            return (
+              <button
+                key={origIndex}
+                disabled={
+                  answered ||
+                  status === "sending" ||
+                  paused ||
+                  effects.freeze ||
+                  isHidden
+                }
+                onClick={() => submitAnswer(roomCode, question.id, origIndex)}
+                className={`${
+                  isHidden
+                    ? "bg-indigo-700 opacity-30"
+                    : answered
+                      ? COLORS_SENT[origIndex % 4] + " opacity-60"
+                      : paused || effects.freeze
+                        ? COLORS_SENT[origIndex % 4] + " opacity-50"
+                        : COLORS[origIndex % 4]
+                } disabled:cursor-not-allowed text-white font-bold rounded-2xl px-3 py-4 text-left transition flex flex-col gap-1 select-none`}
+              >
+                {isHidden ? (
+                  <>
+                    <span className="text-xl">?</span>
+                    <span className="text-xs">Caché</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xl">{SHAPES[origIndex % 4]}</span>
+                    <span className="text-xs leading-tight">{text}</span>
+                  </>
+                )}
+              </button>
+            );
+          },
+        )}
       </div>
     </div>
   );
 }
 
-// ── Reveal ────────────────────────────────────────────────────────────────────
-function RevealScreen({ reveal, question, playerId, pseudo, avatar }: any) {
-  const sorted = [...reveal.scores].sort((a: any, b: any) => b.score - a.score);
+// ─── Reveal screen ───────────────────────────────────────────
+function RevealScreen({
+  reveal,
+  question,
+  playerId,
+  pseudo,
+  avatar,
+  teams,
+  config,
+}: any) {
+  const sorted = [...reveal.scores]
+    .filter((p: any) => !p.isEliminated)
+    .sort((a: any, b: any) => b.score - a.score);
   const myRank = sorted.findIndex((p: any) => p.id === playerId) + 1;
   const myScore = reveal.scores.find((p: any) => p.id === playerId)?.score ?? 0;
   const myChoice = reveal.playerAnswers?.[playerId];
-  const didAnswer = myChoice !== undefined;
-  const wasCorrect = myChoice === reveal.correctIndex;
+  const correct = myChoice === reveal.correctIndex;
+  const myTeamId = reveal.scores.find((p: any) => p.id === playerId)?.teamId as
+    | TeamId
+    | undefined;
 
   return (
-    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-start gap-3 p-5 overflow-y-auto">
+    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center gap-3 p-5 overflow-y-auto">
       <div
-        className={`w-full max-w-sm rounded-2xl px-5 py-3 flex items-center gap-3 mt-2 ${didAnswer ? (wasCorrect ? "bg-green-500/20 border border-green-400" : "bg-red-500/20 border border-red-400") : "bg-indigo-700"}`}
+        className={`w-full max-w-sm rounded-2xl px-5 py-3 flex items-center gap-3 mt-2 ${
+          myChoice !== undefined
+            ? correct
+              ? "bg-green-500/20 border border-green-400"
+              : "bg-red-500/20 border border-red-400"
+            : "bg-indigo-700"
+        }`}
       >
         <div className="text-4xl">{AVATAR_EMOJI[avatar]}</div>
         <div className="flex flex-col">
           <span className="text-white font-bold">{pseudo}</span>
-          {didAnswer ? (
+          {myTeamId && (
             <span
-              className={`text-sm font-semibold ${wasCorrect ? "text-green-300" : "text-red-300"}`}
+              className={`text-xs font-semibold ${myTeamId === "red" ? "text-red-300" : "text-blue-300"}`}
             >
-              {wasCorrect ? "✅ Bonne réponse !" : "❌ Mauvaise réponse"}
+              {myTeamId === "red" ? "🔴 Rouge" : "🔵 Bleue"}
+            </span>
+          )}
+          {myChoice !== undefined ? (
+            <span
+              className={`text-sm font-semibold ${correct ? "text-green-300" : "text-red-300"}`}
+            >
+              {correct ? "✅ Bonne réponse !" : "❌ Mauvaise réponse"}
             </span>
           ) : (
             <span className="text-indigo-400 text-sm">Pas répondu</span>
@@ -276,23 +491,36 @@ function RevealScreen({ reveal, question, playerId, pseudo, avatar }: any) {
         </div>
       </div>
 
+      {/* Team bar in teams mode */}
+      {config?.mode === "teams" && teams && (
+        <div className="w-full max-w-sm">
+          {(["red", "blue"] as TeamId[]).map((tid) => (
+            <div key={tid} className="flex justify-between text-sm py-1">
+              <span
+                className={tid === "red" ? "text-red-300" : "text-blue-300"}
+              >
+                {tid === "red" ? "🔴" : "🔵"} {teams[tid].name}
+              </span>
+              <span className="text-yellow-400 font-bold">
+                {teams[tid].score}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {question && (
         <div className="w-full max-w-sm flex flex-col gap-2">
           {question.choices.map((choice: string, i: number) => {
             const isCorrect = i === reveal.correctIndex;
-            const iMyChoice = myChoice === i;
+            const iMine = myChoice === i;
             const voters = reveal.scores.filter(
               (p: any) => reveal.playerAnswers?.[p.id] === i,
             );
-
             return (
               <div
                 key={i}
-                className={`rounded-xl px-4 py-3 flex flex-col gap-1 transition ${
-                  isCorrect
-                    ? "ring-2 ring-green-400 " + COLORS_SENT[i]
-                    : COLORS_DIM[i]
-                } ${iMyChoice && !isCorrect ? "ring-2 ring-red-400" : ""}`}
+                className={`rounded-xl px-4 py-3 flex flex-col gap-1 ${isCorrect ? "ring-2 ring-green-400 bg-indigo-700" : "bg-indigo-800/50"} ${iMine && !isCorrect ? "ring-2 ring-red-400" : ""}`}
               >
                 <div className="flex items-center gap-2">
                   <span className="text-white font-bold">{SHAPES[i]}</span>
@@ -302,10 +530,10 @@ function RevealScreen({ reveal, question, playerId, pseudo, avatar }: any) {
                   {isCorrect && (
                     <span className="text-green-300 text-sm">✅</span>
                   )}
-                  {iMyChoice && !isCorrect && (
+                  {iMine && !isCorrect && (
                     <span className="text-red-300 text-sm">← toi</span>
                   )}
-                  {iMyChoice && isCorrect && (
+                  {iMine && isCorrect && (
                     <span className="text-green-300 text-sm">← toi ✅</span>
                   )}
                 </div>
@@ -325,20 +553,95 @@ function RevealScreen({ reveal, question, playerId, pseudo, avatar }: any) {
       )}
 
       <p className="text-indigo-300 text-sm animate-pulse pb-2">
-        En attente de la prochaine question…
+        En attente de la suite…
       </p>
     </div>
   );
 }
 
-// ── Finished ──────────────────────────────────────────────────────────────────
-function FinishedScreen({ scores, playerId, pseudo, avatar, onLeave }: any) {
-  const sorted = [...scores].sort((a: any, b: any) => b.score - a.score);
-  const myRank = sorted.findIndex((p: any) => p.id === playerId) + 1;
-  const myScore = scores.find((p: any) => p.id === playerId)?.score ?? 0;
-  const MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
+// ─── Round end screen ────────────────────────────────────────
+function RoundEndScreen({
+  roundEnd,
+  playerId,
+  pseudo,
+  avatar,
+  teams,
+  config,
+}: any) {
+  const myScore =
+    roundEnd.scores.find((p: any) => p.id === playerId)?.score ?? 0;
+  const amEliminated = roundEnd.eliminatedPlayerId === playerId;
+  const myTeamId = roundEnd.scores.find((p: any) => p.id === playerId)
+    ?.teamId as TeamId | undefined;
 
-  // Charger les stats mises à jour (updateStats a déjà été appelé)
+  return (
+    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-5 p-6 overflow-y-auto">
+      {amEliminated ? (
+        <>
+          <div className="text-7xl">💀</div>
+          <h1 className="text-3xl font-extrabold text-red-400">Éliminé !</h1>
+          <p className="text-indigo-300 text-center">
+            Tu as été éliminé à la manche {roundEnd.round}.<br />
+            Continue à regarder la partie !
+          </p>
+        </>
+      ) : (
+        <>
+          <h2 className="text-2xl font-extrabold text-white">
+            📊 Fin de la manche {roundEnd.round}
+          </h2>
+          {roundEnd.eliminatedPseudo && (
+            <div className="bg-red-500/20 border border-red-400 rounded-xl px-4 py-2 text-center">
+              <p className="text-red-300 text-sm">Éliminé cette manche</p>
+              <p className="text-white font-bold">
+                💀 {roundEnd.eliminatedPseudo}
+              </p>
+            </div>
+          )}
+          <div className="bg-indigo-800 rounded-2xl px-8 py-3 flex flex-col items-center gap-1">
+            <p className="text-indigo-400 text-xs uppercase tracking-widest">
+              {pseudo}
+            </p>
+            <p className="text-3xl font-extrabold text-yellow-400">
+              {myScore} pts
+            </p>
+          </div>
+          {config?.mode === "teams" && myTeamId && teams && (
+            <div
+              className={`px-4 py-2 rounded-xl text-sm font-bold ${TEAM_BADGES[myTeamId]}`}
+            >
+              Ton équipe : {teams[myTeamId].name} — {teams[myTeamId].score} pts
+            </div>
+          )}
+        </>
+      )}
+      <p className="text-indigo-300 text-sm animate-pulse">
+        En attente de la prochaine manche…
+      </p>
+    </div>
+  );
+}
+
+// ─── Finished screen ─────────────────────────────────────────
+function FinishedScreen({
+  finished,
+  playerId,
+  pseudo,
+  avatar,
+  teams,
+  config,
+  onLeave,
+}: any) {
+  const sorted = [...finished.scores]
+    .filter((p: any) => !p.isEliminated)
+    .sort((a: any, b: any) => b.score - a.score);
+  const myRank = sorted.findIndex((p: any) => p.id === playerId) + 1;
+  const myScore =
+    finished.scores.find((p: any) => p.id === playerId)?.score ?? 0;
+  const MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
+  const isTeams = config?.mode === "teams";
+  const myTeamId = finished.scores.find((p: any) => p.id === playerId)
+    ?.teamId as TeamId | undefined;
   const profile = loadProfile();
 
   return (
@@ -346,45 +649,78 @@ function FinishedScreen({ scores, playerId, pseudo, avatar, onLeave }: any) {
       <div className="text-6xl">{MEDALS[myRank] ?? AVATAR_EMOJI[avatar]}</div>
       <h1 className="text-3xl font-extrabold text-white">Partie terminée !</h1>
 
+      {isTeams && myTeamId && finished.winnerTeamId && (
+        <div
+          className={`px-5 py-2 rounded-xl text-sm font-bold ${TEAM_BADGES[myTeamId]}`}
+        >
+          {finished.winnerTeamId === myTeamId
+            ? "🏆 Ton équipe a gagné !"
+            : "😢 L'équipe adverse a gagné"}
+        </div>
+      )}
+
       <div className="bg-indigo-800 rounded-2xl px-8 py-3 flex flex-col items-center gap-1">
         <p className="text-indigo-400 text-xs uppercase tracking-widest">
           {pseudo}
         </p>
         <p className="text-3xl font-extrabold text-yellow-400">{myScore} pts</p>
-        <p className="text-indigo-300 text-sm">#{myRank} au classement</p>
+        {!isTeams && (
+          <p className="text-indigo-300 text-sm">#{myRank} au classement</p>
+        )}
       </div>
 
-      {/* Stats cumulées */}
+      {isTeams && teams && (
+        <div className="w-full max-w-sm flex flex-col gap-2">
+          {(["red", "blue"] as TeamId[]).map((tid) => (
+            <div
+              key={tid}
+              className={`rounded-2xl px-5 py-3 flex items-center gap-3 border ${tid === "red" ? "border-red-400 bg-red-500/10" : "border-blue-400 bg-blue-500/10"}`}
+            >
+              <span className="text-white font-bold flex-1">
+                {teams[tid].name}
+              </span>
+              <span className="text-yellow-400 font-extrabold text-xl">
+                {teams[tid].score}
+              </span>
+              {finished.winnerTeamId === tid && <span>🏆</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
       {profile && profile.gamesPlayed > 0 && (
         <div className="w-full max-w-sm bg-indigo-700/60 border border-indigo-500 rounded-2xl px-4 py-3">
-          <p className="text-indigo-400 text-xs uppercase tracking-widest mb-2 font-semibold text-center">
-            Mes stats au total
+          <p className="text-indigo-400 text-xs uppercase tracking-widest mb-2 text-center">
+            Mes stats totales
           </p>
           <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="flex flex-col gap-0.5">
-              <span className="text-white font-extrabold text-xl">
+            <div>
+              <p className="text-white font-extrabold text-xl">
                 {profile.gamesPlayed}
-              </span>
-              <span className="text-indigo-400 text-xs">Parties</span>
+              </p>
+              <p className="text-indigo-400 text-xs">Parties</p>
             </div>
-            <div className="flex flex-col gap-0.5">
-              <span className="text-yellow-400 font-extrabold text-xl">
+            <div>
+              <p className="text-yellow-400 font-extrabold text-xl">
                 {profile.wins}
-              </span>
-              <span className="text-indigo-400 text-xs">Victoires</span>
+              </p>
+              <p className="text-indigo-400 text-xs">Victoires</p>
             </div>
-            <div className="flex flex-col gap-0.5">
-              <span className="text-green-400 font-extrabold text-xl">
+            <div>
+              <p className="text-green-400 font-extrabold text-xl">
                 {profile.totalScore}
-              </span>
-              <span className="text-indigo-400 text-xs">Score total</span>
+              </p>
+              <p className="text-indigo-400 text-xs">Score total</p>
             </div>
           </div>
         </div>
       )}
 
       <div className="w-full max-w-sm overflow-y-auto max-h-52">
-        <Scoreboard players={scores} currentPlayerId={playerId} />
+        <Scoreboard
+          players={finished.scores.filter((p: any) => !p.isEliminated)}
+          currentPlayerId={playerId}
+        />
       </div>
 
       <button
@@ -397,7 +733,7 @@ function FinishedScreen({ scores, playerId, pseudo, avatar, onLeave }: any) {
   );
 }
 
-// ── Composant principal ───────────────────────────────────────────────────────
+// ─── Main PlayerScreen ───────────────────────────────────────
 export default function PlayerScreen({
   roomCode,
   playerId,
@@ -416,25 +752,42 @@ export default function PlayerScreen({
     kicked,
     question,
     reveal,
+    roundEnd,
     finished,
     paused,
     pausedTimeLeft,
+    myPower,
+    powerEffect,
+    teams,
     leave,
+    usePower,
   } = useRoom({ role: "player", roomCode, playerId, sessionToken });
 
-  // Mise à jour des stats une seule fois quand la partie se termine
+  const config = state?.config;
+  const players = state?.players ?? [];
+
+  // Stats update on finish
   useEffect(() => {
     if (!finished || statsUpdated.current) return;
     statsUpdated.current = true;
-
-    const scores = finished.scores;
-    const sorted = [...scores].sort((a, b) => b.score - a.score);
-    const myRank = sorted.findIndex((p) => p.id === playerId) + 1;
-    const myScore = scores.find((p) => p.id === playerId)?.score ?? 0;
-    const isWin = myRank === 1;
-
-    updateStats(myScore, isWin);
-  }, [finished, playerId]);
+    const isTeams = config?.mode === "teams";
+    if (isTeams) {
+      const myTeamId = finished.scores.find((p) => p.id === playerId)
+        ?.teamId as TeamId | undefined;
+      const isWin = myTeamId ? finished.winnerTeamId === myTeamId : false;
+      const myScore =
+        finished.scores.find((p) => p.id === playerId)?.score ?? 0;
+      updateStats(myScore, isWin);
+    } else {
+      const sorted = [...finished.scores]
+        .filter((p) => !p.isEliminated)
+        .sort((a, b) => b.score - a.score);
+      const isWin = sorted[0]?.id === playerId;
+      const myScore =
+        finished.scores.find((p) => p.id === playerId)?.score ?? 0;
+      updateStats(myScore, isWin);
+    }
+  }, [finished, playerId, config]);
 
   useEffect(() => {
     if (roomClosed || kicked) {
@@ -449,18 +802,35 @@ export default function PlayerScreen({
     onLeave();
   }
 
-  const players = state?.players ?? [];
+  const isEliminated = state?.eliminatedPlayerIds?.includes(playerId);
 
   if (finished)
     return (
       <>
         <ConnBadge connected={connected} />
         <FinishedScreen
-          scores={finished.scores}
+          finished={finished}
           playerId={playerId}
           pseudo={pseudo}
           avatar={avatar}
+          teams={teams}
+          config={config}
           onLeave={handleLeave}
+        />
+      </>
+    );
+
+  if (roundEnd)
+    return (
+      <>
+        <ConnBadge connected={connected} />
+        <RoundEndScreen
+          roundEnd={roundEnd}
+          playerId={playerId}
+          pseudo={pseudo}
+          avatar={avatar}
+          teams={teams}
+          config={config}
         />
       </>
     );
@@ -475,11 +845,13 @@ export default function PlayerScreen({
           playerId={playerId}
           pseudo={pseudo}
           avatar={avatar}
+          teams={teams}
+          config={config}
         />
       </>
     );
 
-  if (question)
+  if (question && !isEliminated)
     return (
       <>
         <ConnBadge connected={connected} />
@@ -488,22 +860,41 @@ export default function PlayerScreen({
           question={question}
           paused={paused}
           pausedTimeLeft={pausedTimeLeft}
+          myPower={myPower}
+          powerEffect={powerEffect}
+          players={players}
+          playerId={playerId}
+          sessionToken={sessionToken}
+          onUsePower={usePower}
         />
       </>
     );
 
+  // Lobby / waiting / eliminated spectator
   return (
     <>
       <ConnBadge connected={connected} />
-      <Lobby
-        roomCode={roomCode}
-        playerId={playerId}
-        pseudo={pseudo}
-        avatar={avatar}
-        players={players}
-        connected={connected}
-        onLeave={handleLeave}
-      />
+      {isEliminated ? (
+        <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6">
+          <div className="text-7xl">👀</div>
+          <p className="text-white text-2xl font-bold">Mode spectateur</p>
+          <p className="text-indigo-300">
+            Tu as été éliminé — regarde la suite !
+          </p>
+        </div>
+      ) : (
+        <Lobby
+          roomCode={roomCode}
+          playerId={playerId}
+          pseudo={pseudo}
+          avatar={avatar}
+          players={players}
+          connected={connected}
+          teams={teams}
+          config={config}
+          onLeave={handleLeave}
+        />
+      )}
     </>
   );
 }

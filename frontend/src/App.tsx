@@ -29,6 +29,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("boot");
   const [roomCode, setRoomCode] = useState("");
   const [playerInfo, setPlayerInfo] = useState<PlayerInfo | null>(null);
+  const [gameConfig, setGameConfig] = useState<GameConfig | null>(null);
 
   useEffect(() => {
     async function restore() {
@@ -114,8 +115,9 @@ export default function App() {
   if (screen === "host-create")
     return (
       <HostPage
-        onRoomCreated={(code) => {
+        onRoomCreated={(code, config) => {
           setRoomCode(code);
+          setGameConfig(config);
           setScreen("host-lobby");
         }}
       />
@@ -124,12 +126,15 @@ export default function App() {
     return (
       <HostLobby
         roomCode={roomCode}
+        config={gameConfig!}
         onLeave={goHome}
         onStart={() => setScreen("host-game")}
       />
     );
   if (screen === "host-game")
-    return <HostGame roomCode={roomCode} onLeave={goHome} />;
+    return (
+      <HostGame roomCode={roomCode} config={gameConfig!} onLeave={goHome} />
+    );
   if (screen === "join") {
     return (
       <JoinPage

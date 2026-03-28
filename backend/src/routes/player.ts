@@ -31,6 +31,15 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
   const playerId = uuidv4();
   const sessionToken = uuidv4();
 
+  // Auto-assign team for teams mode (balance teams)
+  let teamId: Player["teamId"] = undefined;
+  if (state.config.mode === "teams") {
+    const players = Object.values(state.players);
+    const reds = players.filter((p) => p.teamId === "red").length;
+    const blues = players.filter((p) => p.teamId === "blue").length;
+    teamId = reds <= blues ? "red" : "blue";
+  }
+
   const player: Player = {
     id: playerId,
     sessionToken,
@@ -41,11 +50,20 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
     connected: false,
     answeredQuestions: [],
     answers: {},
+    teamId,
+    currentPower: null,
+    powerUsedThisRound: false,
+    shieldActive: false,
+    mirrorActive: false,
+    doubleNextAnswer: false,
+    ghostActive: false,
+    frozenUntil: null,
+    activeEffects: [],
   };
 
   state.players[playerId] = player;
   await saveRoom(state);
-  return res.status(201).json({ playerId, sessionToken, roomCode });
+  return res.status(201).json({ playerId, sessionToken, roomCode, teamId });
 });
 
 playerRouter.post("/:roomCode/rejoin", async (req, res) => {
@@ -77,5 +95,7 @@ playerRouter.post("/:roomCode/rejoin", async (req, res) => {
     avatar: player.avatar,
     score: player.score,
     status: state.status,
+    teamId: player.teamId,
+    config: state.config,
   });
 });

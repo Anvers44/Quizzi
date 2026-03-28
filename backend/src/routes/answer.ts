@@ -31,6 +31,10 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
   if (!question || question.id !== questionId)
     return res.status(400).json({ error: "Question incorrecte" });
 
+  // Check freeze
+  if (player.frozenUntil && Date.now() < player.frozenUntil)
+    return res.status(400).json({ error: "Tu es gelé !", frozen: true });
+
   const correct = choiceIndex === question.correctIndex;
   const elapsed = state.questionStartedAt
     ? (Date.now() - state.questionStartedAt) / 1000
@@ -40,7 +44,14 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
         500 * Math.max(0, (question.timeLimit - elapsed) / question.timeLimit),
       )
     : 0;
-  const points = correct ? 1000 + timeBonus : 0;
+
+  let points = correct ? 1000 + timeBonus : 0;
+
+  // Double power
+  if (correct && player.doubleNextAnswer) {
+    points *= 2;
+    player.doubleNextAnswer = false;
+  }
 
   const answer: PlayerAnswer = {
     playerId,
@@ -62,20 +73,28 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     player.answeredQuestions.push(questionId);
   if (!player.answers) player.answers = {};
   player.answers[questionId] = choiceIndex;
+
+  // Team score update
+  if (state.config.mode === "teams" && player.teamId) {
+    state.teams[player.teamId].score += points;
+  }
+
   await saveRoom(state);
 
-  // Broadcast "joueur a répondu" au host (sans révéler si correct)
   try {
     const io = getIo();
-    if (io) io.to(roomCode).emit("player:answered", { playerId, choiceIndex });
+    if (io) {
+      io.to(roomCode).emit("player:answered", { playerId, choiceIndex });
+      if (state.config.mode === "teams") {
+        io.to(roomCode).emit("team:update", { teams: state.teams });
+      }
+    }
   } catch {}
 
-  // Auto-reveal si tout le monde a répondu
   try {
     const io = getIo();
     if (io) await checkAllAnswered(io, roomCode, questionId);
   } catch {}
 
   return res.json({ correct: false, points: 0, score: player.score });
-  // On ne révèle pas correct/points ici — sera dans le reveal socket event
 });

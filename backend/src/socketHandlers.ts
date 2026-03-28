@@ -1,118 +1,170 @@
 import type { Server, Socket } from "socket.io";
 import { getRoom, saveRoom, deleteRoom } from "./redis/helpers";
 import { ROOM_TTL_SECONDS } from "./redis/keys";
+import { DEFENSE_POWERS, ALL_POWERS } from "./types";
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
   RoomStatePayload,
   PublicPlayer,
   QuestionPayload,
+  RoundEndPayload,
 } from "./socket-events";
+import type { GameState, Player, PowerType, TeamId } from "./types";
 
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type AppServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
+// socketId → { roomCode, playerId }
 const socketMap = new Map<string, { roomCode: string; playerId: string }>();
 const revealTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-// Accès global io pour l'utiliser depuis la route answer
 let _io: AppServer;
 export function getIo() {
   return _io;
 }
 
-function toPublicPlayers(
-  players: Record<
-    string,
-    {
-      id: string;
-      pseudo: string;
-      avatar: any;
-      score: number;
-      connected: boolean;
-    }
-  >,
-): PublicPlayer[] {
-  return Object.values(players).map((p) => ({
+// ─── Public helpers ──────────────────────────────────────────
+function toPublicPlayer(p: Player, eliminatedIds: string[]): PublicPlayer {
+  return {
     id: p.id,
     pseudo: p.pseudo,
     avatar: p.avatar,
     score: p.score,
     connected: p.connected,
-  }));
+    teamId: p.teamId,
+    currentPower: p.currentPower,
+    isEliminated: eliminatedIds.includes(p.id),
+    activeEffectTypes: p.activeEffects.map((e) => e.type),
+  };
 }
-
-function toRoomState(
-  state: NonNullable<Awaited<ReturnType<typeof getRoom>>>,
-): RoomStatePayload {
+function toPublicPlayers(state: GameState): PublicPlayer[] {
+  return Object.values(state.players).map((p) =>
+    toPublicPlayer(p, state.eliminatedPlayerIds),
+  );
+}
+function toRoomState(state: GameState): RoomStatePayload {
   return {
     roomCode: state.roomCode,
     status: state.status,
-    players: toPublicPlayers(state.players),
+    config: state.config,
+    players: toPublicPlayers(state),
     currentQuestionIndex: state.currentQuestionIndex,
+    currentRound: state.currentRound,
+    teams: state.teams,
+    eliminatedPlayerIds: state.eliminatedPlayerIds,
   };
 }
+function getActivePlayers(state: GameState): Player[] {
+  return Object.values(state.players).filter(
+    (p) => p.connected && !state.eliminatedPlayerIds.includes(p.id),
+  );
+}
 
+// ─── Room expiry ─────────────────────────────────────────────
 function scheduleRoomExpiry(io: AppServer, roomCode: string) {
-  const existing = expiryTimers.get(roomCode);
-  if (existing) clearTimeout(existing);
-  const timer = setTimeout(async () => {
+  const ex = expiryTimers.get(roomCode);
+  if (ex) clearTimeout(ex);
+  const t = setTimeout(async () => {
     expiryTimers.delete(roomCode);
-    const reveal = revealTimers.get(roomCode);
-    if (reveal) {
-      clearTimeout(reveal);
+    const rv = revealTimers.get(roomCode);
+    if (rv) {
+      clearTimeout(rv);
       revealTimers.delete(roomCode);
     }
     await deleteRoom(roomCode);
     io.to(roomCode).emit("room:closed");
     io.socketsLeave(roomCode);
-    console.log(`[room] ${roomCode} expired — closed`);
   }, ROOM_TTL_SECONDS * 1000);
-  expiryTimers.set(roomCode, timer);
+  expiryTimers.set(roomCode, t);
 }
 
-export async function triggerReveal(io: AppServer, roomCode: string) {
-  const existing = revealTimers.get(roomCode);
-  if (existing) {
-    clearTimeout(existing);
-    revealTimers.delete(roomCode);
+// ─── Round helpers ───────────────────────────────────────────
+function isLastQuestionOfRound(state: GameState): boolean {
+  return (
+    (state.currentQuestionIndex + 1) % state.config.questionsPerRound === 0
+  );
+}
+function isGameOver(state: GameState): boolean {
+  if (state.config.mode === "tournament") {
+    return getActivePlayers(state).length <= 1;
   }
+  return state.currentRound >= state.config.rounds;
+}
 
-  const state = await getRoom(roomCode);
-  if (!state || state.status !== "playing") return;
-
-  state.status = "revealing";
-  await saveRoom(state);
-
-  const question = state.questions[state.currentQuestionIndex];
-  const scores = toPublicPlayers(state.players);
-
-  // Construit la map playerId → choiceIndex pour cette question
-  const playerAnswers: Record<string, number> = {};
-  for (const player of Object.values(state.players)) {
-    const ci = player.answers?.[question.id];
-    if (ci !== undefined) playerAnswers[player.id] = ci;
+// ─── Power helpers ───────────────────────────────────────────
+function assignPowersForRound(state: GameState): void {
+  if (!state.config.powersEnabled) return;
+  for (const p of getActivePlayers(state)) {
+    p.currentPower = ALL_POWERS[Math.floor(Math.random() * ALL_POWERS.length)];
+    p.powerUsedThisRound = false;
   }
+}
 
-  io.to(roomCode).emit("question:reveal", {
-    questionId: question.id,
-    correctIndex: question.correctIndex,
-    scores,
-    playerAnswers,
+function applyDefenseEffect(power: PowerType, player: Player): void {
+  if (power === "shield") player.shieldActive = true;
+  if (power === "double") player.doubleNextAnswer = true;
+  if (power === "mirror") player.mirrorActive = true;
+  if (power === "ghost") player.ghostActive = true;
+}
+
+function applyAttackEffect(
+  power: PowerType,
+  target: Player,
+  fromId: string,
+): void {
+  const now = Date.now();
+  const dur = power === "freeze" ? 4000 : 6000;
+  if (power === "freeze") target.frozenUntil = now + dur;
+  target.activeEffects.push({
+    type: power,
+    expiresAt: now + dur,
+    fromPlayerId: fromId,
   });
 }
 
-async function startQuestion(io: AppServer, roomCode: string) {
+// ─── Emit assigned powers ────────────────────────────────────
+async function emitPowers(
+  io: AppServer,
+  roomCode: string,
+  state: GameState,
+): Promise<void> {
+  if (!state.config.powersEnabled) return;
+  const sockets = await io.in(roomCode).fetchSockets();
+  for (const p of Object.values(state.players)) {
+    if (!p.currentPower || state.eliminatedPlayerIds.includes(p.id)) continue;
+    const entry = [...socketMap.entries()].find(
+      ([, v]) => v.playerId === p.id && v.roomCode === roomCode,
+    );
+    if (!entry) continue;
+    const [sid] = entry;
+    const s = sockets.find((sock) => sock.id === sid);
+    s?.emit("power:assigned", { power: p.currentPower });
+  }
+}
+
+// ─── Start question ──────────────────────────────────────────
+async function startQuestion(io: AppServer, roomCode: string): Promise<void> {
   const state = await getRoom(roomCode);
   if (!state) return;
   const question = state.questions[state.currentQuestionIndex];
-  if (!question) return;
+  if (!question) {
+    await finishGame(io, roomCode);
+    return;
+  }
 
   state.status = "playing";
   state.questionStartedAt = Date.now();
   state.pausedAt = null;
   state.timeElapsedBeforePause = 0;
+
+  // Clean effects
+  const now = Date.now();
+  for (const p of Object.values(state.players)) {
+    p.activeEffects = p.activeEffects.filter((e) => e.expiresAt > now);
+    p.ghostActive = false;
+  }
   await saveRoom(state);
 
   const payload: QuestionPayload = {
@@ -122,49 +174,127 @@ async function startQuestion(io: AppServer, roomCode: string) {
     timeLimit: question.timeLimit,
     index: state.currentQuestionIndex,
     total: state.questions.length,
-    startedAt: state.questionStartedAt,
+    startedAt: state.questionStartedAt!,
+    round: state.currentRound,
+    totalRounds: state.config.rounds,
   };
   io.to(roomCode).emit("question:start", payload);
 
-  const timer = setTimeout(
+  const t = setTimeout(
     () => triggerReveal(io, roomCode),
     question.timeLimit * 1000,
   );
-  revealTimers.set(roomCode, timer);
+  revealTimers.set(roomCode, t);
 }
 
-async function finishGame(io: AppServer, roomCode: string) {
+// ─── Reveal ──────────────────────────────────────────────────
+export async function triggerReveal(
+  io: AppServer,
+  roomCode: string,
+): Promise<void> {
+  const rv = revealTimers.get(roomCode);
+  if (rv) {
+    clearTimeout(rv);
+    revealTimers.delete(roomCode);
+  }
+
+  const state = await getRoom(roomCode);
+  if (!state || state.status !== "playing") return;
+
+  state.status = "revealing";
+  await saveRoom(state);
+
+  const q = state.questions[state.currentQuestionIndex];
+  const playerAnswers: Record<string, number> = {};
+  for (const p of Object.values(state.players)) {
+    const ci = p.answers?.[q.id];
+    if (ci !== undefined) playerAnswers[p.id] = ci;
+  }
+  io.to(roomCode).emit("question:reveal", {
+    questionId: q.id,
+    correctIndex: q.correctIndex,
+    scores: toPublicPlayers(state),
+    playerAnswers,
+    teams: state.teams,
+  });
+}
+
+// ─── Round end ───────────────────────────────────────────────
+async function endRound(io: AppServer, roomCode: string): Promise<void> {
+  const state = await getRoom(roomCode);
+  if (!state) return;
+  state.status = "round_end";
+
+  let eliminatedPlayerId: string | undefined;
+  let eliminatedPseudo: string | undefined;
+
+  if (state.config.mode === "tournament") {
+    const active = getActivePlayers(state);
+    if (active.length > 1) {
+      const loser = [...active].sort((a, b) => a.score - b.score)[0];
+      state.eliminatedPlayerIds.push(loser.id);
+      eliminatedPlayerId = loser.id;
+      eliminatedPseudo = loser.pseudo;
+      console.log(
+        `[tournament] ${loser.pseudo} eliminated in round ${state.currentRound}`,
+      );
+    }
+  }
+  await saveRoom(state);
+
+  const payload: RoundEndPayload = {
+    round: state.currentRound,
+    totalRounds: state.config.rounds,
+    scores: toPublicPlayers(state),
+    teams: state.teams,
+    eliminatedPlayerId,
+    eliminatedPseudo,
+  };
+  io.to(roomCode).emit("game:round_end", payload);
+}
+
+// ─── Finish game ─────────────────────────────────────────────
+async function finishGame(io: AppServer, roomCode: string): Promise<void> {
   const state = await getRoom(roomCode);
   if (!state) return;
   state.status = "finished";
   await saveRoom(state);
+
+  const scores = toPublicPlayers(state);
+  const active = scores
+    .filter((p) => !p.isEliminated)
+    .sort((a, b) => b.score - a.score);
+  const winnerId = active[0]?.id;
+  let winnerTeamId: TeamId | undefined;
+  if (state.config.mode === "teams") {
+    winnerTeamId =
+      state.teams.red.score >= state.teams.blue.score ? "red" : "blue";
+  }
   io.to(roomCode).emit("game:finished", {
-    scores: toPublicPlayers(state.players),
+    scores,
+    teams: state.teams,
+    winnerId,
+    winnerTeamId,
   });
 }
 
-// Vérifie si tous les joueurs connectés ont répondu → auto-reveal
+// ─── Check all answered ──────────────────────────────────────
 export async function checkAllAnswered(
   io: AppServer,
   roomCode: string,
   questionId: string,
-) {
+): Promise<void> {
   const state = await getRoom(roomCode);
   if (!state || state.status !== "playing") return;
-
-  const connected = Object.values(state.players).filter((p) => p.connected);
-  if (connected.length === 0) return;
-
-  const allAnswered = connected.every((p) =>
-    p.answeredQuestions.includes(questionId),
-  );
-  if (allAnswered) {
-    console.log(`[game] all players answered in ${roomCode} — auto-reveal`);
+  const active = getActivePlayers(state);
+  if (active.length === 0) return;
+  if (active.every((p) => p.answeredQuestions.includes(questionId))) {
     await triggerReveal(io, roomCode);
   }
 }
 
-export function registerSocketHandlers(io: AppServer) {
+// ─── Register all socket handlers ───────────────────────────
+export function registerSocketHandlers(io: AppServer): void {
   _io = io;
 
   io.on("connection", (socket: AppSocket) => {
@@ -179,7 +309,7 @@ export function registerSocketHandlers(io: AppServer) {
       await saveRoom(state);
       socket.join(code);
       socket.emit("room:state", toRoomState(state));
-      // Re-envoie la question en cours si le jeu tourne déjà
+      scheduleRoomExpiry(io, code);
       if (
         (state.status === "playing" || state.status === "paused") &&
         state.questionStartedAt
@@ -193,9 +323,10 @@ export function registerSocketHandlers(io: AppServer) {
           index: state.currentQuestionIndex,
           total: state.questions.length,
           startedAt: state.questionStartedAt,
+          round: state.currentRound,
+          totalRounds: state.config.rounds,
         });
       }
-      scheduleRoomExpiry(io, code);
     });
 
     socket.on("player:join", async ({ roomCode, playerId, sessionToken }) => {
@@ -208,42 +339,53 @@ export function registerSocketHandlers(io: AppServer) {
       const player = state.players[playerId];
       if (!player || player.sessionToken !== sessionToken) {
         socket.emit("error", { message: "Session invalide" });
-        // Re-envoie la question en cours si le jeu tourne déjà
-        if (
-          (state.status === "playing" || state.status === "paused") &&
-          state.questionStartedAt
-        ) {
-          const q = state.questions[state.currentQuestionIndex];
-          socket.emit("question:start", {
-            id: q.id,
-            text: q.text,
-            choices: q.choices,
-            timeLimit: q.timeLimit,
-            index: state.currentQuestionIndex,
-            total: state.questions.length,
-            startedAt: state.questionStartedAt,
-          });
-        }
         return;
       }
-      const isReconnection = player.connected;
+      const wasConnected = player.connected;
       player.connected = true;
       if (!player.answers) player.answers = {};
       await saveRoom(state);
       socketMap.set(socket.id, { roomCode: code, playerId });
       socket.join(code);
       socket.emit("room:state", toRoomState(state));
-      if (isReconnection) {
-        io.to(code).emit("player:reconnected", { playerId });
-      } else {
-        io.to(code).emit("player:joined", {
-          id: player.id,
-          pseudo: player.pseudo,
-          avatar: player.avatar,
-          score: player.score,
-          connected: true,
+      if (player.currentPower)
+        socket.emit("power:assigned", { power: player.currentPower });
+      if (wasConnected) io.to(code).emit("player:reconnected", { playerId });
+      else
+        io.to(code).emit(
+          "player:joined",
+          toPublicPlayer(player, state.eliminatedPlayerIds),
+        );
+      if (
+        (state.status === "playing" || state.status === "paused") &&
+        state.questionStartedAt
+      ) {
+        const q = state.questions[state.currentQuestionIndex];
+        socket.emit("question:start", {
+          id: q.id,
+          text: q.text,
+          choices: q.choices,
+          timeLimit: q.timeLimit,
+          index: state.currentQuestionIndex,
+          total: state.questions.length,
+          startedAt: state.questionStartedAt,
+          round: state.currentRound,
+          totalRounds: state.config.rounds,
         });
       }
+    });
+
+    socket.on("host:assign_teams", async ({ roomCode, assignments }) => {
+      const code = roomCode.toUpperCase();
+      const state = await getRoom(code);
+      if (!state) return;
+      for (const [pid, tid] of Object.entries(assignments)) {
+        if (state.players[pid]) state.players[pid].teamId = tid as TeamId;
+      }
+      state.teams.red.score = 0;
+      state.teams.blue.score = 0;
+      await saveRoom(state);
+      io.to(code).emit("room:state", toRoomState(state));
     });
 
     socket.on("host:start", async ({ roomCode }) => {
@@ -251,7 +393,13 @@ export function registerSocketHandlers(io: AppServer) {
       const state = await getRoom(code);
       if (!state || state.status !== "lobby") return;
       state.currentQuestionIndex = 0;
+      state.currentRound = 1;
+      state.eliminatedPlayerIds = [];
+      state.teams.red.score = 0;
+      state.teams.blue.score = 0;
+      assignPowersForRound(state);
       await saveRoom(state);
+      await emitPowers(io, code, state);
       await startQuestion(io, code);
     });
 
@@ -259,77 +407,153 @@ export function registerSocketHandlers(io: AppServer) {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
       if (!state) return;
+
       if (state.status === "playing" || state.status === "paused") {
         await triggerReveal(io, code);
         return;
       }
-      const nextIndex = state.currentQuestionIndex + 1;
-      if (nextIndex >= state.questions.length) {
-        await finishGame(io, code);
-      } else {
-        state.currentQuestionIndex = nextIndex;
+      if (state.status === "revealing") {
+        if (isLastQuestionOfRound(state)) {
+          await endRound(io, code);
+        } else {
+          state.currentQuestionIndex++;
+          await saveRoom(state);
+          await startQuestion(io, code);
+        }
+        return;
+      }
+      if (state.status === "round_end") {
+        if (isGameOver(state)) {
+          await finishGame(io, code);
+          return;
+        }
+        state.currentRound++;
+        state.currentQuestionIndex++;
+        assignPowersForRound(state);
         await saveRoom(state);
+        await emitPowers(io, code, state);
         await startQuestion(io, code);
       }
     });
 
-    // ── Pause ──────────────────────────────────────────────
+    // ── Powers ─────────────────────────────────────────────
+    socket.on(
+      "player:use_power",
+      async ({ roomCode, playerId, sessionToken, targetPlayerId }) => {
+        const code = roomCode.toUpperCase();
+        const state = await getRoom(code);
+        if (!state || state.status !== "playing") return;
+
+        const attacker = state.players[playerId];
+        if (!attacker || attacker.sessionToken !== sessionToken) return;
+        if (!attacker.currentPower || attacker.powerUsedThisRound) return;
+        if (state.eliminatedPlayerIds.includes(playerId)) return;
+
+        const power = attacker.currentPower;
+        const isDefense = (DEFENSE_POWERS as readonly string[]).includes(power);
+
+        if (isDefense) {
+          applyDefenseEffect(power, attacker);
+          attacker.currentPower = null;
+          attacker.powerUsedThisRound = true;
+          await saveRoom(state);
+          socket.emit("power:assigned", { power: "shield" }); // dummy refresh
+          io.to(code).emit("room:state", toRoomState(state));
+          return;
+        }
+
+        // Attack
+        const target = state.players[targetPlayerId];
+        if (!target || state.eliminatedPlayerIds.includes(targetPlayerId))
+          return;
+
+        // Ghost: untargetable
+        if (target.ghostActive) {
+          socket.emit("power:blocked", { byShield: false, mirrorSent: false });
+          return;
+        }
+
+        // Shield / Mirror
+        if (target.shieldActive) {
+          const mirrored = target.mirrorActive;
+          target.shieldActive = false;
+          target.mirrorActive = false;
+          attacker.currentPower = null;
+          attacker.powerUsedThisRound = true;
+          if (mirrored) {
+            // Apply attack to the attacker
+            applyAttackEffect(power, attacker, attacker.id);
+            io.to(code).emit("power:effect", {
+              type: power,
+              fromPlayerId: attacker.id,
+              fromPseudo: attacker.pseudo,
+              targetPlayerId: attacker.id,
+              hiddenChoiceIndex: Math.floor(Math.random() * 4),
+              newChoiceOrder: [0, 1, 2, 3].sort(() => Math.random() - 0.5),
+            });
+          }
+          await saveRoom(state);
+          socket.emit("power:blocked", {
+            byShield: true,
+            mirrorSent: mirrored,
+          });
+          return;
+        }
+
+        // Apply attack
+        applyAttackEffect(power, target, playerId);
+        attacker.currentPower = null;
+        attacker.powerUsedThisRound = true;
+        await saveRoom(state);
+
+        io.to(code).emit("power:effect", {
+          type: power,
+          fromPlayerId: playerId,
+          fromPseudo: attacker.pseudo,
+          targetPlayerId,
+          hiddenChoiceIndex: Math.floor(Math.random() * 4),
+          newChoiceOrder: [0, 1, 2, 3].sort(() => Math.random() - 0.5),
+        });
+        io.to(code).emit("room:state", toRoomState(state));
+      },
+    );
+
     socket.on("host:pause", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
       if (!state || state.status !== "playing") return;
-
-      // Calcule le temps restant
       const elapsed =
         (Date.now() - (state.questionStartedAt ?? Date.now())) / 1000;
-      const question = state.questions[state.currentQuestionIndex];
-      const timeLeft = Math.max(0, question.timeLimit - elapsed);
-
-      // Annule le timer auto-reveal
+      const q = state.questions[state.currentQuestionIndex];
+      const timeLeft = Math.max(0, q.timeLimit - elapsed);
       const t = revealTimers.get(code);
       if (t) {
         clearTimeout(t);
         revealTimers.delete(code);
       }
-
       state.status = "paused";
       state.pausedAt = Date.now();
       state.timeElapsedBeforePause = elapsed;
       await saveRoom(state);
-
       io.to(code).emit("game:paused", { timeLeft: Math.ceil(timeLeft) });
-      console.log(`[game] paused in ${code}, ${Math.ceil(timeLeft)}s left`);
     });
 
-    // ── Resume ─────────────────────────────────────────────
     socket.on("host:resume", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
       if (!state || state.status !== "paused") return;
-
-      const question = state.questions[state.currentQuestionIndex];
-      const timeLeft = Math.max(
-        0,
-        question.timeLimit - state.timeElapsedBeforePause,
-      );
-
-      // Recalcule un startedAt fictif pour que les clients recalculent correctement
+      const q = state.questions[state.currentQuestionIndex];
+      const timeLeft = Math.max(0, q.timeLimit - state.timeElapsedBeforePause);
       const newStartedAt = Date.now() - state.timeElapsedBeforePause * 1000;
-
       state.status = "playing";
       state.questionStartedAt = newStartedAt;
       state.pausedAt = null;
       await saveRoom(state);
-
-      // Relance le timer auto-reveal
-      const timer = setTimeout(() => triggerReveal(io, code), timeLeft * 1000);
-      revealTimers.set(code, timer);
-
+      const t = setTimeout(() => triggerReveal(io, code), timeLeft * 1000);
+      revealTimers.set(code, t);
       io.to(code).emit("game:resumed", { startedAt: newStartedAt });
-      console.log(`[game] resumed in ${code}, ${Math.ceil(timeLeft)}s left`);
     });
 
-    // ── Stop (termine immédiatement) ───────────────────────
     socket.on("host:stop", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
       const t = revealTimers.get(code);
@@ -338,21 +562,17 @@ export function registerSocketHandlers(io: AppServer) {
         revealTimers.delete(code);
       }
       await finishGame(io, code);
-      console.log(`[game] stopped by host in ${code}`);
     });
 
     socket.on("host:leave", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
-      const t = revealTimers.get(code);
-      if (t) {
-        clearTimeout(t);
-        revealTimers.delete(code);
-      }
-      const e = expiryTimers.get(code);
-      if (e) {
-        clearTimeout(e);
-        expiryTimers.delete(code);
-      }
+      [revealTimers, expiryTimers].forEach((map) => {
+        const t = map.get(code);
+        if (t) {
+          clearTimeout(t);
+          map.delete(code);
+        }
+      });
       await deleteRoom(code);
       io.to(code).emit("room:closed");
       io.socketsLeave(code);

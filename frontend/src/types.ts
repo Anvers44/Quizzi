@@ -31,6 +31,72 @@ export const AVATAR_EMOJI: Record<Avatar, string> = {
   frog: "🐸",
 };
 
+// ─── Modes & config ──────────────────────────────────────────
+export type GameMode = "classic" | "teams" | "tournament";
+export type TeamId = "red" | "blue";
+
+export interface GameConfig {
+  mode: GameMode;
+  theme: string;
+  rounds: number;
+  questionsPerRound: number;
+  powersEnabled: boolean;
+}
+
+export interface Team {
+  id: TeamId;
+  name: string;
+  score: number;
+}
+
+// ─── Powers ─────────────────────────────────────────────────
+export type PowerType =
+  | "blind"
+  | "freeze"
+  | "flip"
+  | "shuffle" // attack
+  | "shield"
+  | "double"
+  | "mirror"
+  | "ghost"; // defense
+
+export const POWER_LABELS: Record<PowerType, string> = {
+  blind: "💥 Aveugle",
+  freeze: "❄️ Gèle",
+  flip: "🔄 Retourne",
+  shuffle: "🔀 Mélange",
+  shield: "🛡️ Bouclier",
+  double: "✨ Double",
+  mirror: "🪞 Miroir",
+  ghost: "👻 Fantôme",
+};
+
+export const POWER_DESC: Record<PowerType, string> = {
+  blind: "Cache un choix à la cible 8s",
+  freeze: "Bloque la cible 4s",
+  flip: "Retourne l'écran de la cible 5s",
+  shuffle: "Mélange les choix de la cible",
+  shield: "Bloque la prochaine attaque",
+  double: "Prochaine bonne réponse × 2 pts",
+  mirror: "Renvoie la prochaine attaque",
+  ghost: "Inciblable pendant cette question",
+};
+
+// ─── Theme labels ────────────────────────────────────────────
+export const THEME_LABELS: Record<string, string> = {
+  general: "🌍 Culture générale",
+  sport: "⚽ Sport",
+  cinema: "🎬 Cinéma",
+  music: "🎵 Musique",
+  history: "📜 Histoire",
+  geography: "🗺️ Géographie",
+  science: "🔬 Science",
+  games: "🎮 Jeux vidéo",
+  logos: "🏷️ Logos",
+  flags: "🏳️ Drapeaux",
+  all: "🎲 Tous les thèmes",
+};
+
 // ─── Player ─────────────────────────────────────────────────
 export interface Player {
   id: string;
@@ -41,6 +107,7 @@ export interface Player {
   score: number;
   connected: boolean;
   answeredQuestions: string[];
+  teamId?: TeamId;
 }
 
 // ─── Question ───────────────────────────────────────────────
@@ -50,33 +117,28 @@ export interface Question {
   choices: string[];
   correctIndex: number;
   timeLimit: number;
-}
-
-// ─── ScoreEntry ─────────────────────────────────────────────
-export interface ScoreEntry {
-  playerId: string;
-  pseudo: string;
-  avatar: Avatar;
-  score: number;
+  theme: string;
 }
 
 // ─── GameState ──────────────────────────────────────────────
-export type RoomStatus = "lobby" | "playing" | "revealing" | "finished";
+export type RoomStatus =
+  | "lobby"
+  | "playing"
+  | "paused"
+  | "revealing"
+  | "round_end"
+  | "finished";
 
 export interface GameState {
   roomCode: string;
   hostSocketId: string;
   status: RoomStatus;
+  config: GameConfig;
   players: Record<string, Player>;
   questions: Question[];
   currentQuestionIndex: number;
   questionStartedAt: number | null;
-}
-
-// ─── Session localStorage ───────────────────────────────────
-export interface LocalSession {
-  roomCode: string;
-  playerId: string;
-  sessionToken: string;
-  role: "host" | "player";
+  currentRound: number;
+  eliminatedPlayerIds: string[];
+  teams: Record<TeamId, Team>;
 }
