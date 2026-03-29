@@ -1,3 +1,4 @@
+// ─── Avatars (16) ────────────────────────────────────────────
 export type Avatar =
   | "fox"
   | "cat"
@@ -6,7 +7,16 @@ export type Avatar =
   | "bear"
   | "panda"
   | "owl"
-  | "frog";
+  | "frog"
+  | "lion"
+  | "tiger"
+  | "penguin"
+  | "koala"
+  | "wolf"
+  | "duck"
+  | "hamster"
+  | "dragon";
+
 export const AVATARS: Avatar[] = [
   "fox",
   "cat",
@@ -16,7 +26,16 @@ export const AVATARS: Avatar[] = [
   "panda",
   "owl",
   "frog",
+  "lion",
+  "tiger",
+  "penguin",
+  "koala",
+  "wolf",
+  "duck",
+  "hamster",
+  "dragon",
 ];
+
 export const AVATAR_EMOJI: Record<Avatar, string> = {
   fox: "🦊",
   cat: "🐱",
@@ -26,36 +45,95 @@ export const AVATAR_EMOJI: Record<Avatar, string> = {
   panda: "🐼",
   owl: "🦉",
   frog: "🐸",
+  lion: "🦁",
+  tiger: "🐯",
+  penguin: "🐧",
+  koala: "🐨",
+  wolf: "🐺",
+  duck: "🦆",
+  hamster: "🐹",
+  dragon: "🐲",
 };
 
+// ─── Difficulty / Game mode ───────────────────────────────────
 export type Difficulty = "easy" | "medium" | "hard";
 export type GameMode = "classic" | "teams" | "tournament";
-export type TeamId = "red" | "blue";
 
-export interface GameConfig {
-  mode: GameMode;
-  themes: string[]; // multi-theme
-  difficulty: Difficulty | "all";
-  rounds: number;
-  questionsPerRound: number;
-  powersEnabled: boolean;
-}
+// ─── Teams (6) ───────────────────────────────────────────────
+export type TeamId = "red" | "blue" | "green" | "yellow" | "purple" | "orange";
+export const ALL_TEAM_IDS: TeamId[] = [
+  "red",
+  "blue",
+  "green",
+  "yellow",
+  "purple",
+  "orange",
+];
+export const TEAM_META: Record<
+  TeamId,
+  {
+    label: string;
+    emoji: string;
+    bg: string;
+    border: string;
+    text: string;
+    light: string;
+  }
+> = {
+  red: {
+    label: "Rouge",
+    emoji: "🔴",
+    bg: "bg-red-500",
+    border: "border-red-400",
+    text: "text-red-300",
+    light: "bg-red-500/10",
+  },
+  blue: {
+    label: "Bleue",
+    emoji: "🔵",
+    bg: "bg-blue-500",
+    border: "border-blue-400",
+    text: "text-blue-300",
+    light: "bg-blue-500/10",
+  },
+  green: {
+    label: "Verte",
+    emoji: "🟢",
+    bg: "bg-green-500",
+    border: "border-green-400",
+    text: "text-green-300",
+    light: "bg-green-500/10",
+  },
+  yellow: {
+    label: "Jaune",
+    emoji: "🟡",
+    bg: "bg-yellow-500",
+    border: "border-yellow-400",
+    text: "text-yellow-300",
+    light: "bg-yellow-500/10",
+  },
+  purple: {
+    label: "Violette",
+    emoji: "🟣",
+    bg: "bg-purple-500",
+    border: "border-purple-400",
+    text: "text-purple-300",
+    light: "bg-purple-500/10",
+  },
+  orange: {
+    label: "Orange",
+    emoji: "🟠",
+    bg: "bg-orange-500",
+    border: "border-orange-400",
+    text: "text-orange-300",
+    light: "bg-orange-500/10",
+  },
+};
 
-export interface Team {
-  id: TeamId;
-  name: string;
-  score: number;
-}
-
-export type PowerType =
-  | "blind"
-  | "freeze"
-  | "flip"
-  | "shuffle"
-  | "shield"
-  | "double"
-  | "mirror"
-  | "ghost";
+// ─── Powers ───────────────────────────────────────────────────
+export type AttackPower = "blind" | "freeze" | "flip" | "shuffle";
+export type DefensePower = "shield" | "double" | "mirror" | "ghost";
+export type PowerType = AttackPower | DefensePower;
 
 export const POWER_LABELS: Record<PowerType, string> = {
   blind: "💥 Aveugle",
@@ -68,16 +146,17 @@ export const POWER_LABELS: Record<PowerType, string> = {
   ghost: "👻 Fantôme",
 };
 export const POWER_DESC: Record<PowerType, string> = {
-  blind: "Cache un choix à la cible 8s",
+  blind: "Cache un choix à la cible",
   freeze: "Bloque la cible 4s",
-  flip: "Retourne l'écran de la cible 5s",
-  shuffle: "Mélange les choix de la cible",
+  flip: "Retourne l'écran de la cible",
+  shuffle: "Mélange les choix",
   shield: "Bloque la prochaine attaque",
-  double: "Prochaine bonne réponse × 2",
+  double: "Prochaine réponse × 2",
   mirror: "Renvoie la prochaine attaque",
   ghost: "Inciblable cette question",
 };
 
+// ─── Theme labels ─────────────────────────────────────────────
 export const THEME_LABELS: Record<string, string> = {
   general: "🌍 Général",
   sport: "⚽ Sport",
@@ -90,13 +169,29 @@ export const THEME_LABELS: Record<string, string> = {
   logos: "🏷️ Logos",
   flags: "🏳️ Drapeaux",
 };
-
 export const DIFFICULTY_LABELS: Record<string, string> = {
-  all: "Tous les niveaux",
+  all: "Tous niveaux",
   easy: "⭐ Facile",
   medium: "⭐⭐ Moyen",
   hard: "⭐⭐⭐ Difficile",
 };
+
+// ─── Game config ─────────────────────────────────────────────
+export interface GameConfig {
+  mode: GameMode;
+  themes: string[];
+  difficulty: Difficulty | "all";
+  rounds: number;
+  questionsPerRound: number;
+  powersEnabled: boolean;
+  teamCount: number;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  score: number;
+}
 
 export interface Player {
   id: string;
@@ -107,7 +202,8 @@ export interface Player {
   score: number;
   connected: boolean;
   answeredQuestions: string[];
-  teamId?: TeamId;
+  teamId?: string;
+  specialtyTheme?: string | null;
 }
 
 export interface Question {
@@ -131,14 +227,35 @@ export type RoomStatus =
 
 export interface GameState {
   roomCode: string;
-  hostSocketId: string;
   status: RoomStatus;
   config: GameConfig;
   players: Record<string, Player>;
   questions: Question[];
   currentQuestionIndex: number;
-  questionStartedAt: number | null;
   currentRound: number;
   eliminatedPlayerIds: string[];
-  teams: Record<TeamId, Team>;
+  teams: Record<string, Team>;
+}
+
+// ─── Settings ────────────────────────────────────────────────
+export interface AppSettings {
+  soundEnabled: boolean;
+  vibrationEnabled: boolean;
+}
+export const DEFAULT_SETTINGS: AppSettings = {
+  soundEnabled: true,
+  vibrationEnabled: true,
+};
+export function loadSettings(): AppSettings {
+  try {
+    return {
+      ...DEFAULT_SETTINGS,
+      ...JSON.parse(localStorage.getItem("quiz_settings") || "{}"),
+    };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+export function saveSettings(s: AppSettings) {
+  localStorage.setItem("quiz_settings", JSON.stringify(s));
 }

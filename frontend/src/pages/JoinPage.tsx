@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { apiPost, apiGet } from "../lib/api";
 import { saveSession } from "../lib/session";
 import { loadProfile, saveProfile } from "../lib/profile";
-import { AVATARS, AVATAR_EMOJI } from "../types";
+import { AVATARS, AVATAR_EMOJI, THEME_LABELS } from "../types";
+import { unlockAudio } from "../lib/sound";
 import type { Avatar, GameConfig } from "../types";
 
 interface Props {
@@ -23,33 +24,62 @@ interface RoomInfo {
   playerCount: number;
   config: GameConfig;
 }
+interface RoomDetail {
+  players: Record<string, { avatar: string }>;
+}
 
 export default function JoinPage({ onJoined, onBack }: Props) {
   const [roomCode, setRoomCode] = useState("");
   const [pseudo, setPseudo] = useState("");
   const [avatar, setAvatar] = useState<Avatar>("fox");
+  const [specialtyTheme, setSpecialtyTheme] = useState<string>("none");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [rooms, setRooms] = useState<RoomInfo[]>([]);
+  const [takenAvatars, setTakenAvatars] = useState<string[]>([]);
   const [hasProfile, setHasProfile] = useState(false);
 
+  // Load profile
   useEffect(() => {
-    const profile = loadProfile();
-    if (profile) {
-      setPseudo(profile.pseudo);
-      setAvatar(profile.avatar);
+    const p = loadProfile();
+    if (p) {
+      setPseudo(p.pseudo);
+      setAvatar(p.avatar);
       setHasProfile(true);
     }
   }, []);
 
+  // Load available rooms
   useEffect(() => {
     apiGet<{ rooms: RoomInfo[] }>("/api/rooms/list")
       .then((d) => setRooms(d.rooms))
       .catch(() => {});
   }, []);
 
+  // When room code changes (6 chars), fetch taken avatars
+  useEffect(() => {
+    const code = roomCode.trim().toUpperCase();
+    if (code.length !== 6) {
+      setTakenAvatars([]);
+      return;
+    }
+    apiGet<RoomDetail>(`/api/rooms/${code}`)
+      .then((d) => {
+        const taken = Object.values(d.players || {}).map((p) => p.avatar);
+        setTakenAvatars(taken);
+        // Auto-switch if current avatar is taken
+        if (taken.includes(avatar)) {
+          const free = AVATARS.find((a) => !taken.includes(a));
+          if (free) setAvatar(free);
+        }
+      })
+      .catch(() => setTakenAvatars([]));
+  }, [roomCode]);
+
   async function handleJoin() {
     setError("");
+    // Unlock audio on first user action
+    unlockAudio();
     const code = roomCode.trim().toUpperCase();
     if (code.length !== 6) {
       setError("Le code doit faire 6 lettres");
@@ -59,13 +89,21 @@ export default function JoinPage({ onJoined, onBack }: Props) {
       setError("Entre ton pseudo");
       return;
     }
+    if (takenAvatars.includes(avatar)) {
+      setError("Cet avatar est déjà pris — choisis-en un autre");
+      return;
+    }
     setLoading(true);
     try {
       const res = await apiPost<{
         playerId: string;
         sessionToken: string;
         roomCode: string;
-      }>(`/api/rooms/${code}/join`, { pseudo: pseudo.trim(), avatar });
+      }>(`/api/rooms/${code}/join`, {
+        pseudo: pseudo.trim(),
+        avatar,
+        specialtyTheme: specialtyTheme === "none" ? null : specialtyTheme,
+      });
       const existing = loadProfile();
       saveProfile({
         pseudo: pseudo.trim(),
@@ -100,9 +138,14 @@ export default function JoinPage({ onJoined, onBack }: Props) {
     teams: "🤝",
     tournament: "🏆",
   };
+  const themeEntries = Object.entries(THEME_LABELS);
 
   return (
-    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-start gap-4 p-5 overflow-y-auto">
+    <div
+      className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-start gap-4 p-5 overflow-y-auto"
+      onTouchStart={unlockAudio}
+      onClick={unlockAudio}
+    >
       {/* Header */}
       <div className="w-full max-w-xs flex items-center justify-between pt-1">
         <button
@@ -115,22 +158,22 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         <div className="w-12" />
       </div>
 
-      {/* Bienvenue retour */}
+      {/* Welcome back */}
       {hasProfile && (
         <div className="w-full max-w-xs bg-indigo-700/60 border border-indigo-500 rounded-2xl px-4 py-3 flex items-center gap-3">
           <span className="text-3xl">{AVATAR_EMOJI[avatar]}</span>
-          <div className="flex flex-col">
-            <span className="text-white font-bold text-sm">
+          <div>
+            <p className="text-white font-bold text-sm">
               Bon retour, {pseudo} !
-            </span>
-            <span className="text-indigo-300 text-xs">
-              Tu peux changer ton avatar ci-dessous
-            </span>
+            </p>
+            <p className="text-indigo-300 text-xs">
+              Avatar peut être changé ci-dessous
+            </p>
           </div>
         </div>
       )}
 
-      {/* Parties disponibles */}
+      {/* Available rooms */}
       {rooms.length > 0 && (
         <div className="w-full max-w-xs flex flex-col gap-2">
           <p className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
@@ -158,7 +201,7 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         </div>
       )}
 
-      {/* Code */}
+      {/* Room code */}
       <div className="w-full max-w-xs flex flex-col gap-1">
         <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
           Code de la partie
@@ -188,21 +231,82 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         />
       </div>
 
-      {/* Avatar */}
+      {/* Avatar — 16 with taken indicators */}
+      <div className="w-full max-w-xs flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
+            Avatar
+          </label>
+          {takenAvatars.length > 0 && (
+            <span className="text-indigo-500 text-xs">🔒 = déjà pris</span>
+          )}
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {AVATARS.map((a) => {
+            const isTaken = takenAvatars.includes(a);
+            const isSelected = avatar === a;
+            return (
+              <button
+                key={a}
+                onClick={() => !isTaken && setAvatar(a)}
+                disabled={isTaken}
+                className={`relative text-3xl p-2 rounded-xl transition-all ${
+                  isSelected
+                    ? "bg-yellow-400 scale-110"
+                    : isTaken
+                      ? "bg-indigo-900 opacity-40 cursor-not-allowed"
+                      : "bg-indigo-800 hover:bg-indigo-700 active:scale-95"
+                }`}
+              >
+                {AVATAR_EMOJI[a]}
+                {isTaken && (
+                  <span className="absolute top-0.5 right-0.5 text-xs">🔒</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Specialty theme */}
       <div className="w-full max-w-xs flex flex-col gap-2">
         <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
-          Avatar
+          Thème spécialité{" "}
+          <span className="text-indigo-500 font-normal">(optionnel)</span>
         </label>
-        <div className="grid grid-cols-4 gap-2">
-          {AVATARS.map((a) => (
-            <button
-              key={a}
-              onClick={() => setAvatar(a)}
-              className={`text-3xl p-2 rounded-xl transition ${avatar === a ? "bg-yellow-400 scale-110" : "bg-indigo-800"}`}
-            >
-              {AVATAR_EMOJI[a]}
-            </button>
-          ))}
+        <p className="text-indigo-500 text-xs">
+          Bonne réponse sur ce thème → +20% · Mauvaise → −100 pts
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            onClick={() => setSpecialtyTheme("none")}
+            className={`py-2 rounded-xl text-sm font-semibold transition ${
+              specialtyTheme === "none"
+                ? "bg-yellow-400 text-indigo-900"
+                : "bg-indigo-800 text-white hover:bg-indigo-700"
+            }`}
+          >
+            Aucun
+          </button>
+          {themeEntries.map(([key, label]) => {
+            const [emoji, ...words] = label.split(" ");
+            return (
+              <button
+                key={key}
+                onClick={() => setSpecialtyTheme(key)}
+                className={`flex flex-col items-center gap-0.5 py-2 px-1 rounded-xl text-xs font-semibold transition ${
+                  specialtyTheme === key
+                    ? "bg-yellow-400 text-indigo-900"
+                    : "bg-indigo-800 text-white hover:bg-indigo-700"
+                }`}
+              >
+                <span className="text-xl">{emoji}</span>
+                <span className="text-center leading-tight">
+                  {words.join(" ")}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -215,7 +319,7 @@ export default function JoinPage({ onJoined, onBack }: Props) {
       <button
         onClick={handleJoin}
         disabled={loading}
-        className="bg-yellow-400 active:bg-yellow-300 disabled:opacity-50 text-indigo-900 font-bold text-xl px-10 py-4 rounded-2xl shadow-lg w-full max-w-xs mb-4"
+        className="bg-yellow-400 active:bg-yellow-300 disabled:opacity-50 text-indigo-900 font-bold text-xl px-10 py-4 rounded-2xl shadow-lg w-full max-w-xs mb-4 transition-all active:scale-95"
       >
         {loading ? "Connexion…" : "Rejoindre"}
       </button>

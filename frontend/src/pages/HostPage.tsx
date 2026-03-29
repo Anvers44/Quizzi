@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { apiPost } from "../lib/api";
 import { saveSession } from "../lib/session";
-import { THEME_LABELS, DIFFICULTY_LABELS } from "../types";
+import {
+  THEME_LABELS,
+  DIFFICULTY_LABELS,
+  TEAM_META,
+  ALL_TEAM_IDS,
+} from "../types";
 import type { GameMode, GameConfig, Difficulty } from "../types";
 
 interface Props {
@@ -16,7 +21,6 @@ const DIFFICULTIES: Array<Difficulty | "all"> = [
   "medium",
   "hard",
 ];
-
 const MODE_INFO: Record<
   GameMode,
   { emoji: string; label: string; desc: string }
@@ -29,13 +33,9 @@ const MODE_INFO: Record<
   teams: {
     emoji: "🤝",
     label: "Équipes",
-    desc: "Rouge vs Bleu — points cumulés",
+    desc: "Équipes de couleur — points cumulés",
   },
-  tournament: {
-    emoji: "🏆",
-    label: "Tournoi",
-    desc: "Un éliminé par manche, dernier debout",
-  },
+  tournament: { emoji: "🏆", label: "Tournoi", desc: "Un éliminé par manche" },
 };
 
 export default function HostPage({ onRoomCreated, onBack }: Props) {
@@ -45,6 +45,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
   const [rounds, setRounds] = useState(3);
   const [qpr, setQpr] = useState(5);
   const [powers, setPowers] = useState(false);
+  const [teamCount, setTeamCount] = useState(2);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -54,18 +55,14 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
       return;
     }
     setSelectedThemes((prev) => {
-      const without = prev.filter((t) => t !== "all");
-      if (without.includes(key)) {
-        const next = without.filter((t) => t !== key);
-        return next.length === 0 ? ["all"] : next;
+      const w = prev.filter((t) => t !== "all");
+      if (w.includes(key)) {
+        const n = w.filter((t) => t !== key);
+        return n.length === 0 ? ["all"] : n;
       }
-      return [...without, key];
+      return [...w, key];
     });
   }
-
-  const themeSummary = selectedThemes.includes("all")
-    ? "Tous les thèmes"
-    : selectedThemes.map((k) => THEME_LABELS[k]).join(", ");
 
   async function createRoom() {
     setLoading(true);
@@ -78,6 +75,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
         rounds: mode === "tournament" ? 10 : rounds,
         questionsPerRound: qpr,
         powersEnabled: powers,
+        teamCount: mode === "teams" ? teamCount : 2,
       };
       const { roomCode } = await apiPost<{ roomCode: string }>(
         "/api/rooms",
@@ -97,9 +95,10 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
     }
   }
 
+  const teamIds = ALL_TEAM_IDS.slice(0, teamCount);
+
   return (
     <div className="min-h-screen bg-indigo-900 flex flex-col items-center p-5 gap-5 overflow-y-auto">
-      {/* Header */}
       <div className="w-full max-w-2xl flex items-center justify-between pt-1">
         <button
           onClick={onBack}
@@ -113,7 +112,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
         <div className="w-16" />
       </div>
 
-      {/* ── Thèmes ── */}
+      {/* Thèmes */}
       <section className="w-full max-w-2xl">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
@@ -125,8 +124,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
               : `${selectedThemes.length} sélectionné${selectedThemes.length > 1 ? "s" : ""}`}
           </span>
         </div>
-        <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
-          {/* "Tout" button */}
+        <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
           <button
             onClick={() => toggleTheme("all")}
             className={`flex flex-col items-center gap-1 px-2 py-3 rounded-2xl text-xs font-semibold transition col-span-2 sm:col-span-1 ${
@@ -140,21 +138,20 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
           </button>
           {THEMES.map(([key, label]) => {
             const [emoji, ...words] = label.split(" ");
-            const isSelected = selectedThemes.includes(key);
+            const isSel =
+              selectedThemes.includes(key) && !selectedThemes.includes("all");
             return (
               <button
                 key={key}
                 onClick={() => toggleTheme(key)}
                 className={`flex flex-col items-center gap-1 px-2 py-3 rounded-2xl text-xs font-semibold transition relative ${
-                  isSelected && !selectedThemes.includes("all")
+                  isSel
                     ? "bg-yellow-400 text-indigo-900"
                     : "bg-indigo-700 text-white hover:bg-indigo-600"
                 }`}
               >
-                {isSelected && !selectedThemes.includes("all") && (
-                  <span className="absolute top-1 right-1 text-indigo-900 text-xs">
-                    ✓
-                  </span>
+                {isSel && (
+                  <span className="absolute top-1 right-1 text-xs">✓</span>
                 )}
                 <span className="text-2xl">{emoji}</span>
                 <span className="text-center leading-tight">
@@ -166,7 +163,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
         </div>
       </section>
 
-      {/* ── Difficulté ── */}
+      {/* Difficulté */}
       <section className="w-full max-w-2xl">
         <h2 className="text-indigo-300 text-xs font-semibold uppercase tracking-widest mb-3">
           Difficulté
@@ -176,11 +173,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
             <button
               key={d}
               onClick={() => setDifficulty(d)}
-              className={`py-3 rounded-2xl font-bold text-sm transition ${
-                difficulty === d
-                  ? "bg-yellow-400 text-indigo-900"
-                  : "bg-indigo-700 text-white hover:bg-indigo-600"
-              }`}
+              className={`py-3 rounded-2xl font-bold text-sm transition ${difficulty === d ? "bg-yellow-400 text-indigo-900" : "bg-indigo-700 text-white hover:bg-indigo-600"}`}
             >
               {DIFFICULTY_LABELS[d]}
             </button>
@@ -188,7 +181,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
         </div>
       </section>
 
-      {/* ── Mode ── */}
+      {/* Mode */}
       <section className="w-full max-w-2xl">
         <h2 className="text-indigo-300 text-xs font-semibold uppercase tracking-widest mb-3">
           Mode de jeu
@@ -217,7 +210,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
         </div>
       </section>
 
-      {/* ── Config ── */}
+      {/* Config */}
       <section className="w-full max-w-2xl">
         <h2 className="text-indigo-300 text-xs font-semibold uppercase tracking-widest mb-3">
           Configuration
@@ -259,19 +252,49 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
             </div>
           )}
 
-          {mode === "tournament" && (
-            <div className="bg-indigo-700/50 rounded-xl px-3 py-2 text-indigo-300 text-sm">
-              🏆 Tournoi : 1 joueur éliminé par manche jusqu'au dernier
-              survivant
+          {/* Teams count — only for teams mode */}
+          {mode === "teams" && (
+            <div className="flex flex-col gap-2">
+              <label className="text-indigo-300 text-sm font-semibold">
+                Nombre d'équipes (2 à 6)
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {[2, 3, 4, 5, 6].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setTeamCount(n)}
+                    className={`flex-1 min-w-10 py-2 rounded-xl font-bold transition ${teamCount === n ? "bg-yellow-400 text-indigo-900" : "bg-indigo-700 text-white"}`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              {/* Preview teams */}
+              <div className="flex flex-wrap gap-2 mt-1">
+                {teamIds.map((id) => (
+                  <span
+                    key={id}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold ${TEAM_META[id].light} ${TEAM_META[id].text} border ${TEAM_META[id].border}`}
+                  >
+                    {TEAM_META[id].emoji} Équipe {TEAM_META[id].label}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Pouvoirs toggle */}
+          {mode === "tournament" && (
+            <div className="bg-indigo-700/50 rounded-xl px-3 py-2 text-indigo-300 text-sm">
+              🏆 1 joueur éliminé par manche jusqu'au dernier survivant
+            </div>
+          )}
+
+          {/* Pouvoirs */}
           <div className="flex items-center justify-between">
             <div>
               <p className="text-white font-semibold">⚡ Pouvoirs</p>
               <p className="text-indigo-400 text-xs">
-                Attaque et défense entre joueurs
+                Utilisables entre les questions
               </p>
             </div>
             <button
@@ -286,17 +309,6 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
         </div>
       </section>
 
-      {/* Résumé */}
-      <div className="w-full max-w-2xl bg-indigo-800/60 border border-indigo-600 rounded-2xl px-5 py-3 text-sm text-indigo-300">
-        <span className="text-white font-bold">Résumé : </span>
-        {themeSummary} · {DIFFICULTY_LABELS[difficulty]} ·{" "}
-        {MODE_INFO[mode].label}
-        {mode !== "tournament"
-          ? ` · ${rounds} manche${rounds > 1 ? "s" : ""} × ${qpr} questions`
-          : ` · ${qpr} q/manche`}
-        {powers ? " · ⚡ Pouvoirs" : ""}
-      </div>
-
       {error && (
         <p className="text-red-400 bg-red-900/30 px-4 py-2 rounded-lg text-sm">
           {error}
@@ -306,7 +318,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
       <button
         onClick={createRoom}
         disabled={loading}
-        className="bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-indigo-900 font-bold text-xl px-12 py-4 rounded-2xl shadow-lg transition mb-6"
+        className="bg-yellow-400 hover:bg-yellow-300 disabled:opacity-50 text-indigo-900 font-bold text-xl px-12 py-4 rounded-2xl shadow-lg transition mb-6 active:scale-95"
       >
         {loading ? "Création…" : "🚀 Créer la partie"}
       </button>

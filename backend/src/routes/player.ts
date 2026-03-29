@@ -2,19 +2,23 @@ import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { getRoom, saveRoom } from "../redis/helpers";
 import type { Player } from "../types";
-import { AVATARS } from "../types";
+import { ALL_TEAM_IDS, AVATARS, ATTACK_POWERS, DEFENSE_POWERS } from "../types";
 
 export const playerRouter = Router();
 
 playerRouter.post("/:roomCode/join", async (req, res) => {
   const roomCode = req.params.roomCode.toUpperCase();
-  const { pseudo, avatar } = req.body as { pseudo?: string; avatar?: string };
+  const { pseudo, avatar, specialtyTheme } = req.body as {
+    pseudo?: string;
+    avatar?: string;
+    specialtyTheme?: string;
+  };
 
   if (!pseudo || pseudo.trim().length < 1)
     return res.status(400).json({ error: "Pseudo requis" });
   if (pseudo.trim().length > 20)
     return res.status(400).json({ error: "Pseudo trop long (20 max)" });
-  if (!avatar || !AVATARS.includes(avatar as (typeof AVATARS)[number]))
+  if (!avatar || !AVATARS.includes(avatar as any))
     return res.status(400).json({ error: "Avatar invalide" });
 
   const state = await getRoom(roomCode);
@@ -22,22 +26,33 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
   if (state.status !== "lobby")
     return res.status(400).json({ error: "La partie a déjà commencé" });
 
+  // Check pseudo uniqueness
   const pseudoTaken = Object.values(state.players).some(
     (p) => p.pseudo.toLowerCase() === pseudo.trim().toLowerCase(),
   );
   if (pseudoTaken)
     return res.status(400).json({ error: "Ce pseudo est déjà pris" });
 
+  // Check avatar uniqueness
+  const avatarTaken = Object.values(state.players).some(
+    (p) => p.avatar === avatar,
+  );
+  if (avatarTaken)
+    return res.status(400).json({ error: "Cet avatar est déjà pris" });
+
   const playerId = uuidv4();
   const sessionToken = uuidv4();
 
-  // Auto-assign team for teams mode (balance teams)
-  let teamId: Player["teamId"] = undefined;
+  // Auto-assign team
+  let teamId: string | undefined;
   if (state.config.mode === "teams") {
-    const players = Object.values(state.players);
-    const reds = players.filter((p) => p.teamId === "red").length;
-    const blues = players.filter((p) => p.teamId === "blue").length;
-    teamId = reds <= blues ? "red" : "blue";
+    const teamIds = ALL_TEAM_IDS.slice(0, state.config.teamCount || 2);
+    const counts = teamIds.map((tid) => ({
+      tid,
+      count: Object.values(state.players).filter((p) => p.teamId === tid)
+        .length,
+    }));
+    teamId = counts.sort((a, b) => a.count - b.count)[0].tid;
   }
 
   const player: Player = {
@@ -50,9 +65,14 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
     connected: false,
     answeredQuestions: [],
     answers: {},
+    answerTimes: {},
     teamId,
-    currentPower: null,
-    powerUsedThisRound: false,
+    specialtyTheme: specialtyTheme || null,
+    // Powers assigned at round start, not here
+    attackPower: null,
+    defensePower: null,
+    attackUsed: false,
+    defenseUsed: false,
     shieldActive: false,
     mirrorActive: false,
     doubleNextAnswer: false,
@@ -60,6 +80,7 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
     frozenUntil: null,
     activeEffects: [],
     pendingEffects: [],
+    roundCorrectCount: 0,
   };
 
   state.players[playerId] = player;
@@ -87,7 +108,6 @@ playerRouter.post("/:roomCode/rejoin", async (req, res) => {
 
   player.connected = true;
   await saveRoom(state);
-
   return res.json({
     playerId: player.id,
     sessionToken: player.sessionToken,
@@ -98,5 +118,6 @@ playerRouter.post("/:roomCode/rejoin", async (req, res) => {
     status: state.status,
     teamId: player.teamId,
     config: state.config,
+    specialtyTheme: player.specialtyTheme,
   });
 });

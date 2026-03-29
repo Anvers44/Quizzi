@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useRoom } from "../hooks/useRoom";
-import { AVATAR_EMOJI } from "../types";
+import { AVATAR_EMOJI, TEAM_META, ALL_TEAM_IDS } from "../types";
 import { clearSession } from "../lib/session";
-import type { GameConfig, TeamId } from "../types";
+import type { GameConfig } from "../types";
 import type { PublicPlayer } from "../socket-events";
 import { getSocket } from "../lib/socket";
 
@@ -12,15 +12,6 @@ interface Props {
   onLeave: () => void;
   onStart: () => void;
 }
-
-const TEAM_STYLE: Record<TeamId, string> = {
-  red: "bg-red-500/10 border border-red-500",
-  blue: "bg-blue-500/10 border border-blue-500",
-};
-const TEAM_TEXT: Record<TeamId, string> = {
-  red: "text-red-300",
-  blue: "text-blue-300",
-};
 
 export default function HostLobby({
   roomCode,
@@ -33,8 +24,10 @@ export default function HostLobby({
     roomCode,
   });
   const [shuffling, setShuffling] = useState(false);
-
   const players: PublicPlayer[] = state?.players ?? [];
+
+  const teamIds = ALL_TEAM_IDS.slice(0, config.teamCount || 2);
+  const isTeams = config.mode === "teams";
 
   function handleLeave() {
     leave();
@@ -46,37 +39,29 @@ export default function HostLobby({
     onStart();
   }
 
-  function swapTeam(playerId: string, currentTeam: TeamId | undefined) {
-    const newTeam: TeamId = currentTeam === "red" ? "blue" : "red";
+  function swapTeam(playerId: string, currentTeam: string | undefined) {
+    const idx = currentTeam ? teamIds.indexOf(currentTeam as any) : -1;
+    const newTid = teamIds[(idx + 1) % teamIds.length];
     getSocket().emit("host:assign_teams", {
       roomCode,
-      assignments: { [playerId]: newTeam },
+      assignments: { [playerId]: newTid },
     });
   }
 
   function shuffleTeams() {
-    if (players.length === 0) return;
+    if (!players.length) return;
     setShuffling(true);
-
-    // Shuffle array
     const shuffled = [...players].sort(() => Math.random() - 0.5);
-    const half = Math.ceil(shuffled.length / 2);
-    const assignments: Record<string, TeamId> = {};
+    const assignments: Record<string, string> = {};
     shuffled.forEach((p, i) => {
-      assignments[p.id] = i < half ? "red" : "blue";
+      assignments[p.id] = teamIds[i % teamIds.length];
     });
-
     getSocket().emit("host:assign_teams", { roomCode, assignments });
     setTimeout(() => setShuffling(false), 600);
   }
 
-  const isTeams = config.mode === "teams";
-  const redPlayers = players.filter((p) => p.teamId === "red");
-  const bluePlayers = players.filter((p) => p.teamId === "blue");
-
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-start gap-4 p-5 overflow-y-auto">
-      {/* Header */}
       <div className="w-full max-w-2xl flex justify-between items-center pt-1">
         <div
           className={`text-xs px-3 py-1 rounded-full font-semibold transition-colors ${
@@ -91,11 +76,10 @@ export default function HostLobby({
           onClick={handleLeave}
           className="text-sm text-indigo-400 hover:text-red-400 transition font-semibold"
         >
-          ✕ Fermer la partie
+          ✕ Fermer
         </button>
       </div>
 
-      {/* Code room */}
       <div className="bg-white rounded-3xl px-10 py-6 flex flex-col items-center gap-1 shadow-2xl">
         <p className="text-indigo-400 text-xs font-semibold uppercase tracking-widest">
           Code de la partie
@@ -107,67 +91,64 @@ export default function HostLobby({
           {config.mode === "classic"
             ? `Classique · ${config.rounds} manche${config.rounds > 1 ? "s" : ""} · ${config.questionsPerRound} q/manche`
             : config.mode === "teams"
-              ? `Équipes · ${config.questionsPerRound} q/manche`
+              ? `${teamIds.length} équipes · ${config.questionsPerRound} q/manche`
               : `Tournoi · ${config.questionsPerRound} q/manche`}
-          {config.powersEnabled ? " · ⚡ Pouvoirs" : ""}
+          {config.powersEnabled ? " · ⚡" : ""}
         </p>
       </div>
 
-      {/* Compteur */}
       <p className="text-indigo-200 text-base">
         {players.length === 0
           ? "En attente de joueurs…"
           : `${players.length} joueur${players.length > 1 ? "s" : ""} connecté${players.length > 1 ? "s" : ""}`}
       </p>
 
-      {/* Équipes */}
+      {/* Teams view */}
       {isTeams && players.length > 0 && (
         <>
-          {/* Bouton Shuffle */}
           <button
             onClick={shuffleTeams}
-            className={`flex items-center gap-2 bg-indigo-700 hover:bg-indigo-600 active:bg-indigo-600 text-white font-semibold px-5 py-2 rounded-xl transition-all ${
-              shuffling ? "scale-95 opacity-70" : ""
-            }`}
+            className={`flex items-center gap-2 bg-indigo-700 hover:bg-indigo-600 text-white font-semibold px-5 py-2 rounded-xl transition-all ${shuffling ? "scale-95 opacity-70" : ""}`}
           >
-            <span
-              className={`text-lg transition-transform ${shuffling ? "animate-spin" : ""}`}
-            >
+            <span className={`text-lg ${shuffling ? "animate-spin" : ""}`}>
               🔀
             </span>
             Mélanger les équipes
           </button>
-
-          <div className="w-full max-w-2xl grid grid-cols-2 gap-3">
-            {(["red", "blue"] as TeamId[]).map((tid) => {
-              const teamPlayers = tid === "red" ? redPlayers : bluePlayers;
+          <div
+            className={`w-full max-w-2xl grid gap-3`}
+            style={{
+              gridTemplateColumns: `repeat(${Math.min(teamIds.length, 3)},1fr)`,
+            }}
+          >
+            {teamIds.map((tid) => {
+              const teamPlayers = players.filter((p) => p.teamId === tid);
+              const meta = TEAM_META[tid];
               return (
                 <div
                   key={tid}
-                  className={`rounded-2xl p-3 transition-all ${TEAM_STYLE[tid]}`}
+                  className={`rounded-2xl p-3 ${meta.light} border ${meta.border}`}
                 >
-                  <p className={`font-bold text-sm mb-2 ${TEAM_TEXT[tid]}`}>
-                    {tid === "red" ? "🔴 Équipe Rouge" : "🔵 Équipe Bleue"}
-                    <span className="ml-1 opacity-70">
-                      ({teamPlayers.length})
-                    </span>
+                  <p className={`font-bold text-sm mb-2 ${meta.text}`}>
+                    {meta.emoji} Éq. {meta.label}{" "}
+                    <span className="opacity-70">({teamPlayers.length})</span>
                   </p>
                   <div className="flex flex-col gap-2 min-h-8">
                     {teamPlayers.map((p: PublicPlayer) => (
                       <div
                         key={p.id}
-                        className="flex items-center gap-2 bg-white/10 rounded-xl px-2 py-1 transition-all"
+                        className="flex items-center gap-2 bg-white/10 rounded-xl px-2 py-1"
                       >
                         <span className="text-xl">
-                          {AVATAR_EMOJI[p.avatar]}
+                          {AVATAR_EMOJI[p.avatar as any]}
                         </span>
-                        <span className="text-white font-semibold text-sm flex-1">
+                        <span className="text-white font-semibold text-sm flex-1 truncate">
                           {p.pseudo}
                         </span>
                         <button
-                          onClick={() => swapTeam(p.id, p.teamId as TeamId)}
+                          onClick={() => swapTeam(p.id, p.teamId)}
                           title="Changer d'équipe"
-                          className="text-xs bg-white/20 hover:bg-white/40 text-white px-2 py-0.5 rounded-lg transition"
+                          className="text-xs bg-white/20 hover:bg-white/40 text-white px-2 py-0.5 rounded-lg transition shrink-0"
                         >
                           ⇄
                         </button>
@@ -175,7 +156,7 @@ export default function HostLobby({
                     ))}
                     {teamPlayers.length === 0 && (
                       <p className="text-xs opacity-40 text-center py-3">
-                        Aucun joueur
+                        Vide
                       </p>
                     )}
                   </div>
@@ -186,17 +167,15 @@ export default function HostLobby({
         </>
       )}
 
-      {/* Classique / tournoi */}
+      {/* Classic / tournament */}
       {!isTeams && players.length > 0 && (
         <div className="flex flex-wrap gap-3 justify-center max-w-2xl">
           {players.map((p: PublicPlayer) => (
             <div
               key={p.id}
-              className={`flex flex-col items-center gap-1 px-4 py-3 rounded-2xl transition-all ${
-                p.connected ? "bg-indigo-700" : "bg-indigo-900 opacity-40"
-              }`}
+              className={`flex flex-col items-center gap-1 px-4 py-3 rounded-2xl transition-all ${p.connected ? "bg-indigo-700" : "bg-indigo-900 opacity-40"}`}
             >
-              <span className="text-3xl">{AVATAR_EMOJI[p.avatar]}</span>
+              <span className="text-3xl">{AVATAR_EMOJI[p.avatar as any]}</span>
               <span className="text-white font-semibold text-sm">
                 {p.pseudo}
               </span>
@@ -208,7 +187,6 @@ export default function HostLobby({
         </div>
       )}
 
-      {/* Démarrer */}
       {players.length > 0 && (
         <button
           onClick={handleStart}

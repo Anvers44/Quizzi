@@ -5,6 +5,7 @@ import HostLobby from "./pages/HostLobby";
 import HostGame from "./pages/HostGame";
 import JoinPage from "./pages/JoinPage";
 import PlayerScreen from "./pages/PlayerScreen";
+import SettingsPage from "./pages/SettingPage";
 import StatsPage from "./pages/StatsPage";
 import { loadSession, clearSession } from "./lib/session";
 import { apiGet } from "./lib/api";
@@ -17,7 +18,8 @@ type Screen =
   | "host-game"
   | "join"
   | "player"
-  | "stats";
+  | "stats"
+  | "settings";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
@@ -141,12 +143,16 @@ export default function App() {
     );
   }
 
+  if (screen === "settings")
+    return <SettingsPage onBack={() => setScreen("home")} />;
+
   // Default: home
   return (
     <HomePage
       onHost={() => setScreen("host-create")}
       onJoin={() => setScreen("join")}
       onStats={() => setScreen("stats")}
+      onSettings={() => setScreen("settings")}
     />
   );
 }

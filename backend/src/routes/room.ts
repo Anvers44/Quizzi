@@ -1,11 +1,21 @@
 import { Router } from "express";
 import { saveRoom, getRoom } from "../redis/helpers";
 import { redis } from "../redis/client";
-import type { GameState, GameConfig } from "../types";
+import type { GameState, GameConfig, Team } from "../types";
+import { ALL_TEAM_IDS } from "../types";
 import { pickQuestions } from "../data/questions";
 import { ROOM_TTL_SECONDS } from "../redis/keys";
 
 export const roomRouter = Router();
+
+const TEAM_NAMES: Record<string, string> = {
+  red: "🔴 Rouge",
+  blue: "🔵 Bleue",
+  green: "🟢 Verte",
+  yellow: "🟡 Jaune",
+  purple: "🟣 Violette",
+  orange: "🟠 Orange",
+};
 
 function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -15,20 +25,16 @@ function generateRoomCode(): string {
   return code;
 }
 
-// POST /api/rooms
 roomRouter.post("/", async (req, res) => {
   try {
     const body = req.body as any;
-
-    // Support both `theme` (legacy) and `themes` (new)
     let themes: string[] = [];
-    if (Array.isArray(body.themes) && body.themes.length > 0) {
+    if (Array.isArray(body.themes) && body.themes.length > 0)
       themes = body.themes;
-    } else if (typeof body.theme === "string") {
-      themes = [body.theme];
-    } else {
-      themes = ["all"];
-    }
+    else if (typeof body.theme === "string") themes = [body.theme];
+    else themes = ["all"];
+
+    const teamCount = Math.min(6, Math.max(2, Number(body.teamCount) || 2));
 
     const config: GameConfig = {
       mode: body.mode || "classic",
@@ -39,9 +45,9 @@ roomRouter.post("/", async (req, res) => {
         ? Number(body.questionsPerRound)
         : 5,
       powersEnabled: Boolean(body.powersEnabled) || false,
+      teamCount,
     };
 
-    // Tournament: pre-generate enough questions for up to 10 rounds
     const totalQ =
       config.mode === "tournament"
         ? config.questionsPerRound * 10
@@ -49,6 +55,14 @@ roomRouter.post("/", async (req, res) => {
 
     const questions = pickQuestions(themes, config.difficulty, totalQ);
     const roomCode = generateRoomCode();
+
+    // Build teams (2-6)
+    const teams: Record<string, Team> = {};
+    ALL_TEAM_IDS.slice(0, config.mode === "teams" ? teamCount : 0).forEach(
+      (tid) => {
+        teams[tid] = { id: tid, name: TEAM_NAMES[tid] || tid, score: 0 };
+      },
+    );
 
     const state: GameState = {
       roomCode,
@@ -63,11 +77,9 @@ roomRouter.post("/", async (req, res) => {
       timeElapsedBeforePause: 0,
       currentRound: 1,
       eliminatedPlayerIds: [],
-      teams: {
-        red: { id: "red", name: "Équipe Rouge", score: 0 },
-        blue: { id: "blue", name: "Équipe Bleue", score: 0 },
-      },
+      teams,
       lastQuestionPoints: {},
+      lastQuestionTimes: {},
     };
 
     await saveRoom(state);
@@ -78,13 +90,11 @@ roomRouter.post("/", async (req, res) => {
   }
 });
 
-// GET /api/rooms/list
 roomRouter.get("/list", async (_req, res) => {
   try {
     const keys = await redis.keys("room:*");
-    const roomKeys = keys.filter((k) => k.split(":").length === 2);
     const rooms = [];
-    for (const key of roomKeys) {
+    for (const key of keys.filter((k) => k.split(":").length === 2)) {
       const raw = await redis.get(key);
       if (!raw) continue;
       const state = JSON.parse(raw) as GameState;
@@ -103,7 +113,6 @@ roomRouter.get("/list", async (_req, res) => {
   }
 });
 
-// GET /api/rooms/:roomCode
 roomRouter.get("/:roomCode", async (req, res) => {
   const state = await getRoom(req.params.roomCode.toUpperCase());
   if (!state) return res.status(404).json({ error: "Room introuvable" });

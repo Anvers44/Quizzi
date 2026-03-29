@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { getSocket } from "../lib/socket";
 import type {
   RoomStatePayload,
@@ -8,9 +8,9 @@ import type {
   RoundEndPayload,
   FinishedPayload,
   PowerEffectPayload,
-  Team,
+  TeamPublic,
 } from "../socket-events";
-import type { TeamId, PowerType } from "../types";
+import type { AttackPower, DefensePower, PowerType } from "../types";
 
 interface UseRoomOptions {
   role: "host" | "player";
@@ -31,18 +31,24 @@ export interface RoomHookState {
   finished: FinishedPayload | null;
   paused: boolean;
   pausedTimeLeft: number;
-  liveAnswers: Record<string, number>;
-  myPower: PowerType | null;
+  // Countdown: only fires at round start, counts down to 0
+  countdown: number;
+  liveAnswers: Record<string, true>;
+  attackPower: AttackPower | null;
+  defensePower: DefensePower | null;
+  attackUsed: boolean;
+  defenseUsed: boolean;
   powerEffect: PowerEffectPayload | null;
   powerBlocked: { byShield: boolean; mirrorSent: boolean } | null;
-  teams: Record<TeamId, Team>;
+  teams: Record<string, TeamPublic>;
   leave: () => void;
   startGame: () => void;
   nextQuestion: () => void;
   pauseGame: () => void;
   resumeGame: () => void;
   stopGame: () => void;
-  usePower: (targetPlayerId: string) => void;
+  useAttack: (targetPlayerId: string) => void;
+  useDefense: () => void;
   clearPowerEffect: () => void;
 }
 
@@ -63,8 +69,12 @@ export function useRoom({
   const [finished, setFinished] = useState<FinishedPayload | null>(null);
   const [paused, setPaused] = useState(false);
   const [pausedTimeLeft, setPausedTimeLeft] = useState(0);
-  const [liveAnswers, setLiveAnswers] = useState<Record<string, number>>({});
-  const [myPower, setMyPower] = useState<PowerType | null>(null);
+  const [countdown, setCountdown] = useState(0);
+  const [liveAnswers, setLiveAnswers] = useState<Record<string, true>>({});
+  const [attackPower, setAttackPower] = useState<AttackPower | null>(null);
+  const [defensePower, setDefensePower] = useState<DefensePower | null>(null);
+  const [attackUsed, setAttackUsed] = useState(false);
+  const [defenseUsed, setDefenseUsed] = useState(false);
   const [powerEffect, setPowerEffect] = useState<PowerEffectPayload | null>(
     null,
   );
@@ -72,10 +82,30 @@ export function useRoom({
     byShield: boolean;
     mirrorSent: boolean;
   } | null>(null);
-  const [teams, setTeams] = useState<Record<TeamId, Team>>({
-    red: { id: "red", name: "Équipe Rouge", score: 0 },
-    blue: { id: "blue", name: "Équipe Bleue", score: 0 },
-  });
+  const [teams, setTeams] = useState<Record<string, TeamPublic>>({});
+  const cdTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Countdown ticker — authoritative server timestamp
+  function startCountdown(serverStartedAt: number) {
+    if (cdTimer.current) {
+      clearInterval(cdTimer.current);
+      cdTimer.current = null;
+    }
+    const tick = () => {
+      const remaining = Math.ceil((serverStartedAt - Date.now()) / 1000);
+      if (remaining <= 0) {
+        setCountdown(0);
+        if (cdTimer.current) {
+          clearInterval(cdTimer.current);
+          cdTimer.current = null;
+        }
+      } else {
+        setCountdown(remaining);
+      }
+    };
+    tick();
+    cdTimer.current = setInterval(tick, 100); // 100ms for precision
+  }
 
   const leave = useCallback(() => {
     const s = getSocket();
@@ -106,19 +136,29 @@ export function useRoom({
   );
   const clearPowerEffect = useCallback(() => setPowerEffect(null), []);
 
-  const usePower = useCallback(
+  const useAttack = useCallback(
     (targetPlayerId: string) => {
       if (!playerId || !sessionToken) return;
-      getSocket().emit("player:use_power", {
+      getSocket().emit("player:use_attack", {
         roomCode,
         playerId,
         sessionToken,
         targetPlayerId,
       });
-      setMyPower(null);
+      setAttackUsed(true);
     },
     [roomCode, playerId, sessionToken],
   );
+
+  const useDefense = useCallback(() => {
+    if (!playerId || !sessionToken) return;
+    getSocket().emit("player:use_defense", {
+      roomCode,
+      playerId,
+      sessionToken,
+    });
+    setDefenseUsed(true);
+  }, [roomCode, playerId, sessionToken]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -141,15 +181,14 @@ export function useRoom({
       setTeams(p.teams);
       if (p.status === "paused") setPaused(true);
     };
-
     const onPlayerJoined = (player: PublicPlayer) => {
-      setState((prev) => {
-        if (!prev || prev.players.find((p) => p.id === player.id)) return prev;
-        return { ...prev, players: [...prev.players, player] };
-      });
+      setState((prev) =>
+        prev && !prev.players.find((p) => p.id === player.id)
+          ? { ...prev, players: [...prev.players, player] }
+          : prev,
+      );
     };
-
-    const onPlayerDisconnected = ({ playerId: pid }: { playerId: string }) => {
+    const onPlayerDisc = ({ playerId: pid }: { playerId: string }) => {
       setState((prev) =>
         prev
           ? {
@@ -161,8 +200,7 @@ export function useRoom({
           : prev,
       );
     };
-
-    const onPlayerReconnected = ({ playerId: pid }: { playerId: string }) => {
+    const onPlayerRecon = ({ playerId: pid }: { playerId: string }) => {
       setState((prev) =>
         prev
           ? {
@@ -174,17 +212,19 @@ export function useRoom({
           : prev,
       );
     };
-
-    const onPlayerAnswered = ({
-      playerId: pid,
-      choiceIndex,
-    }: {
-      playerId: string;
-      choiceIndex: number;
-    }) => {
-      setLiveAnswers((prev) => ({ ...prev, [pid]: choiceIndex }));
+    const onPlayerAnswered = ({ playerId: pid }: { playerId: string }) => {
+      setLiveAnswers((prev) => ({ ...prev, [pid]: true }));
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              players: prev.players.map((p) =>
+                p.id === pid ? { ...p, hasAnswered: true } : p,
+              ),
+            }
+          : prev,
+      );
     };
-
     const onRoomClosed = () => setRoomClosed(true);
     const onPlayerKicked = ({ playerId: pid }: { playerId: string }) => {
       if (pid === playerId) setKicked(true);
@@ -207,9 +247,16 @@ export function useRoom({
           ? { ...prev, status: "playing", currentQuestionIndex: payload.index }
           : prev,
       );
+
+      // Countdown only at round start
+      if (payload.isRoundStart) {
+        startCountdown(payload.startedAt);
+      } else {
+        setCountdown(0);
+      }
     };
 
-    const onQuestionReveal = (payload: RevealPayload) => {
+    const onReveal = (payload: RevealPayload) => {
       setReveal(payload);
       setTeams(payload.teams);
       setState((prev) =>
@@ -223,7 +270,6 @@ export function useRoom({
           : prev,
       );
     };
-
     const onRoundEnd = (payload: RoundEndPayload) => {
       setRoundEnd(payload);
       setTeams(payload.teams);
@@ -238,66 +284,74 @@ export function useRoom({
           : prev,
       );
     };
-
-    const onGamePaused = ({ timeLeft }: { timeLeft: number }) => {
+    const onPaused = ({ timeLeft }: { timeLeft: number }) => {
       setPaused(true);
       setPausedTimeLeft(timeLeft);
       setState((prev) => (prev ? { ...prev, status: "paused" } : prev));
+      if (cdTimer.current) {
+        clearInterval(cdTimer.current);
+        cdTimer.current = null;
+      }
+      setCountdown(0);
     };
-    const onGameResumed = ({ startedAt }: { startedAt: number }) => {
+    const onResumed = ({ startedAt }: { startedAt: number }) => {
       setPaused(false);
       setQuestion((prev) => (prev ? { ...prev, startedAt } : prev));
       setState((prev) => (prev ? { ...prev, status: "playing" } : prev));
     };
-
-    const onGameFinished = (payload: FinishedPayload) => {
+    const onFinished = (payload: FinishedPayload) => {
       setFinished(payload);
       if (payload.teams) setTeams(payload.teams);
       setState((prev) =>
         prev ? { ...prev, status: "finished", players: payload.scores } : prev,
       );
     };
+    const onTeamUpdate = ({
+      teams: t,
+    }: {
+      teams: Record<string, TeamPublic>;
+    }) => setTeams(t);
 
-    const onTeamUpdate = ({ teams: t }: { teams: Record<TeamId, Team> }) => {
-      setTeams(t);
+    const onPowersAssigned = ({
+      attackPower: ap,
+      defensePower: dp,
+    }: {
+      attackPower: AttackPower;
+      defensePower: DefensePower;
+    }) => {
+      setAttackPower(ap);
+      setDefensePower(dp);
+      setAttackUsed(false);
+      setDefenseUsed(false);
     };
-
-    const onPowerAssigned = ({ power }: { power: PowerType }) => {
-      setMyPower(power);
-    };
-
     const onPowerEffect = (payload: PowerEffectPayload) => {
-      // Only apply if this player is the target
-      if (payload.targetPlayerId === playerId) {
-        setPowerEffect(payload);
-        setTimeout(() => setPowerEffect(null), 6500);
-      }
+      // Show to target AND to everyone (so they see the notification)
+      setPowerEffect(payload);
+      setTimeout(() => setPowerEffect(null), 4000);
     };
-
     const onPowerBlocked = (d: { byShield: boolean; mirrorSent: boolean }) => {
       setPowerBlocked(d);
       setTimeout(() => setPowerBlocked(null), 3000);
     };
-
     const onError = ({ message }: { message: string }) => setError(message);
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("room:state", onRoomState);
     socket.on("player:joined", onPlayerJoined);
-    socket.on("player:disconnected", onPlayerDisconnected);
-    socket.on("player:reconnected", onPlayerReconnected);
+    socket.on("player:disconnected", onPlayerDisc);
+    socket.on("player:reconnected", onPlayerRecon);
     socket.on("player:answered", onPlayerAnswered);
     socket.on("room:closed", onRoomClosed);
     socket.on("player:kicked", onPlayerKicked);
     socket.on("question:start", onQuestionStart);
-    socket.on("question:reveal", onQuestionReveal);
+    socket.on("question:reveal", onReveal);
     socket.on("game:round_end", onRoundEnd);
-    socket.on("game:paused", onGamePaused);
-    socket.on("game:resumed", onGameResumed);
-    socket.on("game:finished", onGameFinished);
+    socket.on("game:paused", onPaused);
+    socket.on("game:resumed", onResumed);
+    socket.on("game:finished", onFinished);
     socket.on("team:update", onTeamUpdate);
-    socket.on("power:assigned", onPowerAssigned);
+    socket.on("powers:assigned", onPowersAssigned);
     socket.on("power:effect", onPowerEffect);
     socket.on("power:blocked", onPowerBlocked);
     socket.on("error", onError);
@@ -308,23 +362,24 @@ export function useRoom({
     } else socket.connect();
 
     return () => {
+      if (cdTimer.current) clearInterval(cdTimer.current);
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("room:state", onRoomState);
       socket.off("player:joined", onPlayerJoined);
-      socket.off("player:disconnected", onPlayerDisconnected);
-      socket.off("player:reconnected", onPlayerReconnected);
+      socket.off("player:disconnected", onPlayerDisc);
+      socket.off("player:reconnected", onPlayerRecon);
       socket.off("player:answered", onPlayerAnswered);
       socket.off("room:closed", onRoomClosed);
       socket.off("player:kicked", onPlayerKicked);
       socket.off("question:start", onQuestionStart);
-      socket.off("question:reveal", onQuestionReveal);
+      socket.off("question:reveal", onReveal);
       socket.off("game:round_end", onRoundEnd);
-      socket.off("game:paused", onGamePaused);
-      socket.off("game:resumed", onGameResumed);
-      socket.off("game:finished", onGameFinished);
+      socket.off("game:paused", onPaused);
+      socket.off("game:resumed", onResumed);
+      socket.off("game:finished", onFinished);
       socket.off("team:update", onTeamUpdate);
-      socket.off("power:assigned", onPowerAssigned);
+      socket.off("powers:assigned", onPowersAssigned);
       socket.off("power:effect", onPowerEffect);
       socket.off("power:blocked", onPowerBlocked);
       socket.off("error", onError);
@@ -343,8 +398,12 @@ export function useRoom({
     finished,
     paused,
     pausedTimeLeft,
+    countdown,
     liveAnswers,
-    myPower,
+    attackPower,
+    defensePower,
+    attackUsed,
+    defenseUsed,
     powerEffect,
     powerBlocked,
     teams,
@@ -354,7 +413,8 @@ export function useRoom({
     pauseGame,
     resumeGame,
     stopGame,
-    usePower,
+    useAttack,
+    useDefense,
     clearPowerEffect,
   };
 }

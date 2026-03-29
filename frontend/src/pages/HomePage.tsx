@@ -5,9 +5,15 @@ interface Props {
   onHost: () => void;
   onJoin: () => void;
   onStats: () => void;
+  onSettings: () => void;
 }
 
-export default function HomePage({ onHost, onJoin, onStats }: Props) {
+export default function HomePage({
+  onHost,
+  onJoin,
+  onStats,
+  onSettings,
+}: Props) {
   const profile = loadProfile();
 
   return (
@@ -56,6 +62,13 @@ export default function HomePage({ onHost, onJoin, onStats }: Props) {
           className="bg-indigo-800 hover:bg-indigo-700 active:bg-indigo-700 text-indigo-200 font-bold text-lg px-8 py-3 rounded-2xl transition border border-indigo-600"
         >
           📊 Mes stats
+        </button>
+
+        <button
+          onClick={onSettings}
+          className="bg-indigo-800 hover:bg-indigo-700 active:bg-indigo-700 text-indigo-200 font-bold text-lg px-8 py-3 rounded-2xl transition border border-indigo-600"
+        >
+          ⚙️ Paramètres
         </button>
       </div>
 

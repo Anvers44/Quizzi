@@ -1,21 +1,32 @@
-import type { Avatar, GameConfig, PowerType, TeamId } from "./types";
-
-export interface Team {
-  id: TeamId;
-  name: string;
-  score: number;
-}
+import type {
+  GameConfig,
+  PowerType,
+  AttackPower,
+  DefensePower,
+  Avatar,
+} from "./types";
 
 export interface PublicPlayer {
   id: string;
   pseudo: string;
-  avatar: Avatar;
+  avatar: string;
   score: number;
   connected: boolean;
-  teamId?: TeamId;
-  currentPower?: PowerType | null;
+  teamId?: string;
+  attackPower?: AttackPower | null;
+  defensePower?: DefensePower | null;
+  attackUsed?: boolean;
+  defenseUsed?: boolean;
   isEliminated?: boolean;
   activeEffectTypes?: PowerType[];
+  hasAnswered?: boolean;
+  specialtyTheme?: string | null;
+}
+
+export interface TeamPublic {
+  id: string;
+  name: string;
+  score: number;
 }
 
 export interface RoomStatePayload {
@@ -31,7 +42,7 @@ export interface RoomStatePayload {
   players: PublicPlayer[];
   currentQuestionIndex: number;
   currentRound: number;
-  teams: Record<TeamId, Team>;
+  teams: Record<string, TeamPublic>;
   eliminatedPlayerIds: string[];
 }
 
@@ -42,9 +53,13 @@ export interface QuestionPayload {
   timeLimit: number;
   index: number;
   total: number;
-  startedAt: number;
+  startedAt: number; // when the timer starts (ms timestamp)
+  isRoundStart: boolean; // show countdown overlay only if true
   round: number;
   totalRounds: number;
+  imageUrl?: string;
+  difficulty: "easy" | "medium" | "hard";
+  theme: string;
 }
 
 export interface RevealPayload {
@@ -52,35 +67,39 @@ export interface RevealPayload {
   correctIndex: number;
   scores: PublicPlayer[];
   playerAnswers: Record<string, number>;
-  teams: Record<TeamId, Team>;
+  teams: Record<string, TeamPublic>;
+  pointsEarned: Record<string, number>;
+  timeTaken: Record<string, number>;
+  questionTheme: string;
 }
 
 export interface RoundEndPayload {
   round: number;
   totalRounds: number;
   scores: PublicPlayer[];
-  teams: Record<TeamId, Team>;
+  teams: Record<string, TeamPublic>;
   eliminatedPlayerId?: string;
   eliminatedPseudo?: string;
+  perfectBonuses: Record<string, number>;
 }
 
 export interface FinishedPayload {
   scores: PublicPlayer[];
-  teams: Record<TeamId, Team>;
+  teams: Record<string, TeamPublic>;
   winnerId?: string;
-  winnerTeamId?: TeamId;
+  winnerTeamId?: string;
 }
 
 export interface PowerEffectPayload {
   type: PowerType;
   fromPlayerId: string;
   fromPseudo: string;
+  fromAvatar: string;
   targetPlayerId: string;
   hiddenChoiceIndex?: number;
   newChoiceOrder?: number[];
 }
 
-// Client → Server
 export interface ClientToServerEvents {
   "host:join": (d: { roomCode: string }) => void;
   "player:join": (d: {
@@ -101,23 +120,27 @@ export interface ClientToServerEvents {
   "host:stop": (d: { roomCode: string }) => void;
   "host:assign_teams": (d: {
     roomCode: string;
-    assignments: Record<string, TeamId>;
+    assignments: Record<string, string>;
   }) => void;
-  "player:use_power": (d: {
+  "player:use_attack": (d: {
     roomCode: string;
     playerId: string;
     sessionToken: string;
     targetPlayerId: string;
   }) => void;
+  "player:use_defense": (d: {
+    roomCode: string;
+    playerId: string;
+    sessionToken: string;
+  }) => void;
 }
 
-// Server → Client
 export interface ServerToClientEvents {
   "room:state": (s: RoomStatePayload) => void;
   "player:joined": (p: PublicPlayer) => void;
   "player:disconnected": (d: { playerId: string }) => void;
   "player:reconnected": (d: { playerId: string }) => void;
-  "player:answered": (d: { playerId: string; choiceIndex: number }) => void;
+  "player:answered": (d: { playerId: string }) => void;
   "room:closed": () => void;
   "player:kicked": (d: { playerId: string }) => void;
   "question:start": (d: QuestionPayload) => void;
@@ -126,8 +149,11 @@ export interface ServerToClientEvents {
   "game:resumed": (d: { startedAt: number }) => void;
   "game:round_end": (d: RoundEndPayload) => void;
   "game:finished": (d: FinishedPayload) => void;
-  "team:update": (d: { teams: Record<TeamId, Team> }) => void;
-  "power:assigned": (d: { power: PowerType }) => void;
+  "team:update": (d: { teams: Record<string, TeamPublic> }) => void;
+  "powers:assigned": (d: {
+    attackPower: AttackPower;
+    defensePower: DefensePower;
+  }) => void;
   "power:effect": (d: PowerEffectPayload) => void;
   "power:blocked": (d: { byShield: boolean; mirrorSent: boolean }) => void;
   error: (d: { message: string }) => void;

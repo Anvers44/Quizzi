@@ -2,9 +2,9 @@ import { useEffect } from "react";
 import { useRoom } from "../hooks/useRoom";
 import { useTimer } from "../hooks/useTimer";
 import { clearSession } from "../lib/session";
-import { AVATAR_EMOJI } from "../types";
-import type { TeamId, GameConfig } from "../types";
-import type { PublicPlayer } from "../socket-events";
+import { AVATAR_EMOJI, TEAM_META, ALL_TEAM_IDS } from "../types";
+import type { GameConfig } from "../types";
+import type { PublicPlayer, TeamPublic } from "../socket-events";
 import Scoreboard from "../components/Scoreboard";
 
 interface Props {
@@ -16,53 +16,75 @@ interface Props {
 const SHAPES = ["▲", "◆", "●", "■"];
 const COLORS = ["bg-red-500", "bg-blue-500", "bg-yellow-500", "bg-green-500"];
 const COLORS_DIM = [
-  "bg-red-500/30",
-  "bg-blue-500/30",
-  "bg-yellow-500/30",
-  "bg-green-500/30",
+  "bg-red-500/20",
+  "bg-blue-500/20",
+  "bg-yellow-500/20",
+  "bg-green-500/20",
 ];
 
-const TEAM_COLORS: Record<TeamId, string> = {
-  red: "bg-red-500",
-  blue: "bg-blue-500",
-};
-const TEAM_BORDERS: Record<TeamId, string> = {
-  red: "border-red-400",
-  blue: "border-blue-400",
-};
-
-// ─── Team score bar ──────────────────────────────────────────
-function TeamBar({ teams }: { teams: any }) {
-  const total = teams.red.score + teams.blue.score || 1;
-  const redPct = Math.round((teams.red.score / total) * 100);
+// ─── Team bar ─────────────────────────────────────────────────
+function TeamBar({
+  teams,
+  config,
+}: {
+  teams: Record<string, TeamPublic>;
+  config: GameConfig;
+}) {
+  const teamIds = ALL_TEAM_IDS.slice(0, config.teamCount || 2).filter(
+    (id) => teams[id],
+  );
+  const total = teamIds.reduce((s, id) => s + teams[id].score, 0) || 1;
   return (
-    <div className="w-full max-w-2xl flex flex-col gap-1">
-      <div className="flex justify-between text-sm font-bold">
-        <span className="text-red-300">
-          🔴 {teams.red.name} — {teams.red.score} pts
-        </span>
-        <span className="text-blue-300">
-          🔵 {teams.blue.name} — {teams.blue.score} pts
-        </span>
+    <div className="w-full max-w-4xl flex flex-col gap-1">
+      <div className="flex gap-2 text-xs font-bold">
+        {teamIds.map((id) => (
+          <span key={id} className={`flex-1 text-center ${TEAM_META[id].text}`}>
+            {TEAM_META[id].emoji} {teams[id].name} —{" "}
+            {teams[id].score.toLocaleString()}
+          </span>
+        ))}
       </div>
       <div className="flex h-3 rounded-full overflow-hidden">
-        <div
-          className="bg-red-500 transition-all"
-          style={{ width: `${redPct}%` }}
-        />
-        <div className="bg-blue-500 flex-1" />
+        {teamIds.map((id) => (
+          <div
+            key={id}
+            className={`${TEAM_META[id].bg} transition-all duration-500`}
+            style={{
+              width: `${(teams[id].score / total) * 100}%`,
+              minWidth: teams[id].score > 0 ? "2px" : "0",
+            }}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
-// ─── Question view ───────────────────────────────────────────
+// ─── Countdown overlay ────────────────────────────────────────
+function CountdownOverlay({ n }: { n: number }) {
+  return (
+    <div className="absolute inset-0 bg-indigo-900/90 z-50 flex flex-col items-center justify-center animate-fadeIn pointer-events-none">
+      <p className="text-indigo-300 text-sm uppercase tracking-widest mb-4">
+        La question commence dans
+      </p>
+      <span
+        className="text-9xl font-extrabold text-white animate-popIn"
+        key={n}
+      >
+        {n}
+      </span>
+    </div>
+  );
+}
+
+// ─── Question screen (no choice avatars during question) ──────
 function HostQuestion({
   question,
   players,
   liveAnswers,
   paused,
   pausedTimeLeft,
+  countdown,
   teams,
   config,
   onNext,
@@ -70,84 +92,89 @@ function HostQuestion({
   onResume,
   onStop,
 }: any) {
-  const timeLeft = useTimer(question.startedAt, question.timeLimit, paused);
+  const timeLeft = useTimer(
+    question.startedAt,
+    question.timeLimit,
+    paused || countdown > 0,
+  );
   const display = paused ? pausedTimeLeft : timeLeft;
   const pct = Math.max(0, (display / question.timeLimit) * 100);
   const timerColor =
     pct > 50 ? "bg-green-400" : pct > 20 ? "bg-yellow-400" : "bg-red-500";
+
   const answered = Object.keys(liveAnswers).length;
   const connected = players.filter(
     (p: any) => p.connected && !p.isEliminated,
   ).length;
 
   return (
-    <div className="h-[100dvh] bg-indigo-900 flex flex-col gap-3 p-4 overflow-hidden">
+    <div className="relative h-[100dvh] bg-indigo-900 flex flex-col gap-3 p-4 overflow-hidden">
+      {countdown > 0 && <CountdownOverlay n={countdown} />}
+
       {/* Header */}
       <div className="flex justify-between items-center">
         <span className="text-indigo-300 text-sm font-semibold">
-          Manche {question.round}/{question.totalRounds} · Q
+          M{question.round}/{question.totalRounds} · Q
           {(question.index % config.questionsPerRound) + 1}/
           {config.questionsPerRound}
-        </span>
-        <span className="text-indigo-300 text-sm">
-          {answered}/{connected} réponses
         </span>
         <span
           className={`text-2xl font-extrabold tabular-nums ${display <= 5 ? "text-red-400 animate-pulse" : "text-white"}`}
         >
-          {paused ? "⏸" : ""}
+          {paused ? "⏸ " : ""}
           {display}s
+        </span>
+        <span className="text-indigo-300 text-sm">
+          {answered}/{connected} ✓
         </span>
       </div>
 
       <div className="w-full bg-indigo-800 rounded-full h-3 overflow-hidden">
         <div
-          className={`${timerColor} h-3 rounded-full transition-all duration-200`}
+          className={`${timerColor} h-3 rounded-full transition-all duration-300`}
           style={{ width: `${pct}%` }}
         />
       </div>
 
-      {config.mode === "teams" && <TeamBar teams={teams} />}
+      {config.mode === "teams" && <TeamBar teams={teams} config={config} />}
 
-      <div className="flex-1 flex items-center justify-center">
+      {/* Question */}
+      <div className="flex-1 flex flex-col items-center justify-center gap-3">
+        {question.imageUrl && (
+          <img
+            src={question.imageUrl}
+            alt=""
+            className="rounded-2xl max-h-40 object-contain"
+          />
+        )}
         <p className="text-white text-2xl font-bold text-center max-w-3xl">
           {question.text}
         </p>
       </div>
 
+      {/* Answers - only count, no avatars (so nobody sees who picked what) */}
       <div className="grid grid-cols-2 gap-2 max-w-4xl mx-auto w-full">
-        {question.choices.map((choice: string, i: number) => {
-          const respondents = players.filter(
-            (p: any) => liveAnswers[p.id] === i,
-          );
-          return (
-            <div
-              key={i}
-              className={`${COLORS[i]} rounded-2xl px-4 py-3 flex flex-col gap-2`}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-white font-bold">{SHAPES[i]}</span>
-                <span className="text-white text-sm font-semibold flex-1">
-                  {choice}
-                </span>
-                {respondents.length > 0 && (
-                  <span className="bg-white/20 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                    {respondents.length}
-                  </span>
-                )}
-              </div>
-              {respondents.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {respondents.map((p: any) => (
-                    <span key={p.id} title={p.pseudo} className="text-xl">
-                      {AVATAR_EMOJI[p.avatar]}
-                    </span>
-                  ))}
-                </div>
-              )}
+        {question.choices.map((choice: string, i: number) => (
+          <div
+            key={i}
+            className={`${COLORS[i]} rounded-2xl px-4 py-4 flex flex-col gap-1`}
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-white font-bold text-lg">{SHAPES[i]}</span>
+              <span className="text-white text-sm font-semibold flex-1">
+                {choice}
+              </span>
             </div>
-          );
-        })}
+            {/* Only show count of players who answered, not which one */}
+            <p className="text-white/70 text-xs">
+              {players.filter(
+                (p: any) => p.hasAnswered && p.connected && !p.isEliminated,
+              ).length > 0
+                ? ""
+                : ""}
+            </p>
+          </div>
+        ))}
       </div>
 
       <div className="flex gap-2 justify-center flex-wrap">
@@ -183,7 +210,7 @@ function HostQuestion({
   );
 }
 
-// ─── Reveal view ─────────────────────────────────────────────
+// ─── Reveal screen (score + time per player) ──────────────────
 function HostReveal({
   question,
   reveal,
@@ -195,59 +222,92 @@ function HostReveal({
   isLastRound,
   onStop,
 }: any) {
+  const sorted = [...reveal.scores]
+    .filter((p: any) => !p.isEliminated)
+    .sort((a: any, b: any) => b.score - a.score);
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col gap-3 p-4 overflow-y-auto">
       <div className="flex justify-between items-center">
         <span className="text-indigo-300 text-sm font-semibold">
-          Manche {question.round}/{question.totalRounds} · Q
+          M{question.round}/{question.totalRounds} · Q
           {(question.index % config.questionsPerRound) + 1}/
           {config.questionsPerRound}
         </span>
         <span className="text-green-300 text-sm font-bold">✅ Révélée</span>
       </div>
 
-      {config.mode === "teams" && <TeamBar teams={teams} />}
+      {config.mode === "teams" && <TeamBar teams={teams} config={config} />}
 
       <p className="text-white text-lg font-bold text-center px-4">
         {question.text}
       </p>
 
+      {/* Answer choices */}
       <div className="grid grid-cols-2 gap-2 max-w-4xl mx-auto w-full">
         {question.choices.map((choice: string, i: number) => {
           const isCorrect = i === reveal.correctIndex;
-          const respondents = players.filter(
+          const respondents = reveal.scores.filter(
             (p: any) => reveal.playerAnswers?.[p.id] === i,
           );
           return (
             <div
               key={i}
-              className={`${isCorrect ? COLORS[i] + " ring-4 ring-white" : COLORS_DIM[i]} rounded-2xl px-4 py-3 flex flex-col gap-2`}
+              className={`${isCorrect ? COLORS[i] + " ring-4 ring-white" : COLORS_DIM[i]} rounded-2xl px-4 py-3`}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 mb-1">
                 <span className="text-white font-bold">{SHAPES[i]}</span>
                 <span className="text-white text-sm font-semibold flex-1">
                   {choice}
                 </span>
                 {isCorrect && <span>✅</span>}
+                <span className="text-white/70 text-xs">
+                  {respondents.length} joueur{respondents.length > 1 ? "s" : ""}
+                </span>
               </div>
-              {respondents.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {respondents.map((p: any) => (
-                    <span key={p.id} title={p.pseudo} className="text-xl">
-                      {AVATAR_EMOJI[p.avatar]}
+              <div className="flex flex-wrap gap-1">
+                {respondents.map((p: any) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-1 bg-white/20 rounded-lg px-2 py-0.5"
+                  >
+                    <span>{AVATAR_EMOJI[p.avatar]}</span>
+                    <span className="text-white text-xs font-semibold">
+                      {p.pseudo}
                     </span>
-                  ))}
-                </div>
-              )}
+                    {reveal.timeTaken?.[p.id] !== undefined && (
+                      <span className="text-white/60 text-xs">
+                        {reveal.timeTaken[p.id].toFixed(1)}s
+                      </span>
+                    )}
+                    {reveal.pointsEarned?.[p.id] > 0 && (
+                      <span className="text-green-300 text-xs font-bold">
+                        +{reveal.pointsEarned[p.id]}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           );
         })}
       </div>
 
+      {/* Players who didn't answer */}
+      {(() => {
+        const noAnswer = reveal.scores.filter(
+          (p: any) =>
+            !p.isEliminated && reveal.playerAnswers?.[p.id] === undefined,
+        );
+        if (!noAnswer.length) return null;
+        return (
+          <div className="text-center text-indigo-400 text-xs">
+            N'ont pas répondu : {noAnswer.map((p: any) => p.pseudo).join(", ")}
+          </div>
+        );
+      })()}
+
       <div className="max-w-md mx-auto w-full">
-        <Scoreboard
-          players={reveal.scores.filter((p: any) => !p.isEliminated)}
-        />
+        <Scoreboard players={sorted} />
       </div>
 
       <div className="flex gap-2 justify-center flex-wrap pb-2">
@@ -272,18 +332,21 @@ function HostReveal({
   );
 }
 
-// ─── Round end view ──────────────────────────────────────────
+// ─── Round end (perfect bonus displayed) ─────────────────────
 function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
+  const teamIds = ALL_TEAM_IDS.slice(0, config.teamCount || 2);
+  const perfects = Object.entries(roundEnd.perfectBonuses || {}).filter(
+    ([, v]) => (v as number) > 0,
+  );
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-5 p-6 overflow-y-auto">
-      <h2 className="text-3xl font-extrabold text-white">
+      <h2 className="text-3xl font-extrabold text-white animate-slideDown">
         📊 Fin de la manche {roundEnd.round}
         {roundEnd.totalRounds > 1 ? `/${roundEnd.totalRounds}` : ""}
       </h2>
 
-      {/* Tournament elimination */}
       {roundEnd.eliminatedPseudo && (
-        <div className="bg-red-500/20 border border-red-400 rounded-2xl px-6 py-3 text-center">
+        <div className="bg-red-500/20 border border-red-400 rounded-2xl px-6 py-3 text-center animate-scaleIn">
           <p className="text-red-300 text-sm">Éliminé</p>
           <p className="text-white text-xl font-bold">
             💀 {roundEnd.eliminatedPseudo}
@@ -291,23 +354,41 @@ function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
         </div>
       )}
 
-      {/* Team scores */}
+      {perfects.length > 0 && (
+        <div className="bg-yellow-400/20 border border-yellow-400 rounded-2xl px-5 py-3 text-center animate-popIn">
+          <p className="text-yellow-300 text-sm font-bold">
+            ⭐ Manche parfaite ! +500 pts
+          </p>
+          <p className="text-white text-sm">
+            {perfects
+              .map(
+                ([pid]) =>
+                  roundEnd.scores.find((p: any) => p.id === pid)?.pseudo,
+              )
+              .filter(Boolean)
+              .join(", ")}
+          </p>
+        </div>
+      )}
+
       {config.mode === "teams" && (
-        <div className="w-full max-w-sm flex flex-col gap-3">
-          {(["red", "blue"] as TeamId[]).map((tid) => (
-            <div
-              key={tid}
-              className={`rounded-2xl px-5 py-3 flex items-center gap-3 border ${TEAM_BORDERS[tid]} bg-indigo-800`}
-            >
-              <div className={`w-4 h-4 rounded-full ${TEAM_COLORS[tid]}`} />
-              <span className="text-white font-bold flex-1">
-                {teams[tid].name}
-              </span>
-              <span className="text-yellow-400 font-extrabold text-xl">
-                {teams[tid].score}
-              </span>
-            </div>
-          ))}
+        <div className="w-full max-w-sm flex flex-col gap-2">
+          {teamIds
+            .filter((id) => teams[id])
+            .map((id) => (
+              <div
+                key={id}
+                className={`rounded-2xl px-5 py-3 flex items-center gap-3 border ${TEAM_META[id].border} ${TEAM_META[id].light}`}
+              >
+                <span>{TEAM_META[id].emoji}</span>
+                <span className="text-white font-bold flex-1">
+                  {teams[id].name}
+                </span>
+                <span className="text-yellow-400 font-extrabold text-xl">
+                  {teams[id].score.toLocaleString()}
+                </span>
+              </div>
+            ))}
         </div>
       )}
 
@@ -319,7 +400,7 @@ function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
 
       <button
         onClick={onNext}
-        className="bg-yellow-400 text-indigo-900 font-bold text-xl px-12 py-4 rounded-2xl shadow-lg"
+        className="bg-yellow-400 text-indigo-900 font-bold text-xl px-12 py-4 rounded-2xl shadow-lg active:scale-95 transition-all"
       >
         {isLastRound ? "🏆 Résultats finaux" : "➡ Manche suivante"}
       </button>
@@ -327,8 +408,9 @@ function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
   );
 }
 
-// ─── Finished view ───────────────────────────────────────────
+// ─── Finished ─────────────────────────────────────────────────
 function HostFinished({ finished, teams, config, onLeave }: any) {
+  const teamIds = ALL_TEAM_IDS.slice(0, config.teamCount || 2);
   const isTeams = config.mode === "teams";
   const winner = isTeams
     ? null
@@ -336,61 +418,57 @@ function HostFinished({ finished, teams, config, onLeave }: any) {
         .filter((p: any) => !p.isEliminated)
         .sort((a: any, b: any) => b.score - a.score)[0];
   const winTeam =
-    isTeams && finished.winnerTeamId
-      ? teams[finished.winnerTeamId as TeamId]
-      : null;
-
+    isTeams && finished.winnerTeamId ? teams[finished.winnerTeamId] : null;
   return (
-    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-5 p-6 overflow-y-auto">
-      <h1 className="text-4xl font-extrabold text-white">
+    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-5 p-6 overflow-y-auto animate-fadeIn">
+      <h1 className="text-4xl font-extrabold text-white animate-slideDown">
         🏆 Résultats finaux
       </h1>
-
       {winTeam && (
         <div
-          className={`rounded-2xl px-8 py-4 text-center border ${TEAM_BORDERS[finished.winnerTeamId]}`}
+          className={`rounded-2xl px-8 py-4 text-center border ${TEAM_META[finished.winnerTeamId as any]?.border || "border-yellow-400"}`}
         >
           <p className="text-indigo-300 text-sm">Équipe gagnante</p>
           <p className="text-3xl font-extrabold text-yellow-400">
-            {winTeam.name} — {winTeam.score} pts
+            {winTeam.name} — {winTeam.score.toLocaleString()} pts
           </p>
         </div>
       )}
-
       {!isTeams && winner && (
-        <div className="bg-yellow-400/20 border border-yellow-400 rounded-2xl px-8 py-4 text-center">
+        <div className="bg-yellow-400/20 border border-yellow-400 rounded-2xl px-8 py-4 text-center animate-popIn">
           <p className="text-indigo-300 text-sm">Vainqueur</p>
           <p className="text-3xl font-extrabold text-yellow-400">
-            {AVATAR_EMOJI[winner.avatar]} {winner.pseudo} — {winner.score} pts
+            {AVATAR_EMOJI[winner.avatar]} {winner.pseudo} —{" "}
+            {winner.score.toLocaleString()} pts
           </p>
         </div>
       )}
-
       {isTeams && (
         <div className="w-full max-w-sm flex flex-col gap-2">
-          {(["red", "blue"] as TeamId[]).map((tid) => (
-            <div
-              key={tid}
-              className={`rounded-2xl px-5 py-3 flex items-center gap-3 border ${TEAM_BORDERS[tid]} bg-indigo-800`}
-            >
-              <div className={`w-4 h-4 rounded-full ${TEAM_COLORS[tid]}`} />
-              <span className="text-white font-bold flex-1">
-                {teams[tid].name}
-              </span>
-              <span className="text-yellow-400 font-extrabold text-xl">
-                {teams[tid].score}
-              </span>
-            </div>
-          ))}
+          {teamIds
+            .filter((id) => teams[id])
+            .map((id) => (
+              <div
+                key={id}
+                className={`rounded-2xl px-5 py-3 flex items-center gap-3 border ${TEAM_META[id].border} ${TEAM_META[id].light}`}
+              >
+                <span>{TEAM_META[id].emoji}</span>
+                <span className="text-white font-bold flex-1">
+                  {teams[id].name}
+                </span>
+                <span className="text-yellow-400 font-extrabold text-xl">
+                  {teams[id].score.toLocaleString()}
+                </span>
+                {finished.winnerTeamId === id && <span>🏆</span>}
+              </div>
+            ))}
         </div>
       )}
-
       <div className="w-full max-w-md overflow-y-auto max-h-72">
         <Scoreboard
           players={finished.scores.filter((p: any) => !p.isEliminated)}
         />
       </div>
-
       <button
         onClick={onLeave}
         className="bg-yellow-400 text-indigo-900 font-bold text-xl px-12 py-4 rounded-2xl shadow-lg"
@@ -401,7 +479,7 @@ function HostFinished({ finished, teams, config, onLeave }: any) {
   );
 }
 
-// ─── Main HostGame ───────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────
 export default function HostGame({ roomCode, config, onLeave }: Props) {
   const {
     state,
@@ -413,6 +491,7 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
     paused,
     pausedTimeLeft,
     liveAnswers,
+    countdown,
     teams,
     leave,
     nextQuestion,
@@ -427,7 +506,6 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
       onLeave();
     }
   }, [roomClosed]);
-
   function handleLeave() {
     leave();
     clearSession();
@@ -449,7 +527,6 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
         onLeave={handleLeave}
       />
     );
-
   if (roundEnd)
     return (
       <HostRoundEnd
@@ -462,7 +539,6 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
         }
       />
     );
-
   if (reveal && question)
     return (
       <HostReveal
@@ -477,7 +553,6 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
         onStop={stopGame}
       />
     );
-
   if (question)
     return (
       <HostQuestion
@@ -486,6 +561,7 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
         liveAnswers={liveAnswers}
         paused={paused}
         pausedTimeLeft={pausedTimeLeft}
+        countdown={countdown}
         teams={teams}
         config={config}
         onNext={nextQuestion}
