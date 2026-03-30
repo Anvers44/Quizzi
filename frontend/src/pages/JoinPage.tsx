@@ -14,6 +14,7 @@ interface Props {
       sessionToken: string;
       pseudo: string;
       avatar: Avatar;
+      specialtyTheme: string | null;
     },
   ) => void;
   onBack: () => void;
@@ -112,19 +113,13 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         wins: existing?.wins ?? 0,
         totalScore: existing?.totalScore ?? 0,
       });
-      saveSession({
-        roomCode: res.roomCode,
-        playerId: res.playerId,
-        sessionToken: res.sessionToken,
-        role: "player",
-        pseudo: pseudo.trim(),
-        avatar,
-      });
+      // Session saved by App.tsx via handlePlayerJoined
       onJoined(res.roomCode, {
         playerId: res.playerId,
         sessionToken: res.sessionToken,
         pseudo: pseudo.trim(),
         avatar,
+        specialtyTheme: specialtyTheme === "none" ? null : specialtyTheme,
       });
     } catch (e) {
       setError((e as Error).message);

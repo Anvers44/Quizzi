@@ -25,9 +25,12 @@ function generateRoomCode(): string {
   return code;
 }
 
+// POST /api/rooms
 roomRouter.post("/", async (req, res) => {
   try {
     const body = req.body as any;
+
+    // Support both `theme` (legacy) and `themes` (new)
     let themes: string[] = [];
     if (Array.isArray(body.themes) && body.themes.length > 0)
       themes = body.themes;
@@ -48,6 +51,7 @@ roomRouter.post("/", async (req, res) => {
       teamCount,
     };
 
+    // Tournament: generate enough for up to 10 rounds
     const totalQ =
       config.mode === "tournament"
         ? config.questionsPerRound * 10
@@ -56,13 +60,13 @@ roomRouter.post("/", async (req, res) => {
     const questions = pickQuestions(themes, config.difficulty, totalQ);
     const roomCode = generateRoomCode();
 
-    // Build teams (2-6)
+    // Build teams (2-6 for teams mode, empty otherwise)
     const teams: Record<string, Team> = {};
-    ALL_TEAM_IDS.slice(0, config.mode === "teams" ? teamCount : 0).forEach(
-      (tid) => {
+    if (config.mode === "teams") {
+      ALL_TEAM_IDS.slice(0, teamCount).forEach((tid) => {
         teams[tid] = { id: tid, name: TEAM_NAMES[tid] || tid, score: 0 };
-      },
-    );
+      });
+    }
 
     const state: GameState = {
       roomCode,
@@ -83,6 +87,9 @@ roomRouter.post("/", async (req, res) => {
     };
 
     await saveRoom(state);
+    console.log(
+      `[room] created ${roomCode} mode=${config.mode} themes=${themes.join(",")} difficulty=${config.difficulty} teamCount=${teamCount}`,
+    );
     res.status(201).json({ roomCode, config });
   } catch (err) {
     console.error("[POST /api/rooms]", err);
@@ -90,6 +97,7 @@ roomRouter.post("/", async (req, res) => {
   }
 });
 
+// GET /api/rooms/list
 roomRouter.get("/list", async (_req, res) => {
   try {
     const keys = await redis.keys("room:*");
@@ -113,9 +121,11 @@ roomRouter.get("/list", async (_req, res) => {
   }
 });
 
+// GET /api/rooms/:roomCode
 roomRouter.get("/:roomCode", async (req, res) => {
   const state = await getRoom(req.params.roomCode.toUpperCase());
   if (!state) return res.status(404).json({ error: "Room introuvable" });
+  // Return players with avatar visible (needed for avatar uniqueness check in JoinPage)
   const safePlayers = Object.fromEntries(
     Object.entries(state.players).map(([id, p]) => [
       id,

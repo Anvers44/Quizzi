@@ -1,30 +1,29 @@
-import type { Avatar } from "../types";
+const SESSION_KEY = "quiz_session";
 
-export interface LocalSession {
+export interface Session {
   roomCode: string;
-  playerId: string;
-  sessionToken: string;
+  playerId?: string;
+  sessionToken?: string;
   role: "host" | "player";
   pseudo?: string;
-  avatar?: Avatar;
+  avatar?: string;
+  specialtyTheme?: string | null; // ← thème spécialité du joueur
 }
 
-const KEY = "quiz_session";
-
-export function saveSession(session: LocalSession): void {
-  localStorage.setItem(KEY, JSON.stringify(session));
+export function saveSession(session: Session): void {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
 }
 
-export function loadSession(): LocalSession | null {
-  const raw = localStorage.getItem(KEY);
+export function loadSession(): Session | null {
+  const raw = localStorage.getItem(SESSION_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as LocalSession;
+    return JSON.parse(raw) as Session;
   } catch {
     return null;
   }
 }
 
 export function clearSession(): void {
-  localStorage.removeItem(KEY);
+  localStorage.removeItem(SESSION_KEY);
 }

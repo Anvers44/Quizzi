@@ -7,7 +7,7 @@ import JoinPage from "./pages/JoinPage";
 import PlayerScreen from "./pages/PlayerScreen";
 import SettingsPage from "./pages/SettingPage";
 import StatsPage from "./pages/StatsPage";
-import { loadSession, clearSession } from "./lib/session";
+import { loadSession, saveSession, clearSession } from "./lib/session";
 import { apiGet } from "./lib/api";
 import type { GameConfig, Avatar } from "./types";
 
@@ -30,13 +30,12 @@ export default function App() {
   const [pseudo, setPseudo] = useState("");
   const [avatar, setAvatar] = useState<Avatar>("fox");
 
-  // Restore session on mount
+  // ── Restore session on mount ───────────────────────────────
   useEffect(() => {
     const session = loadSession();
     if (!session) return;
 
     if (session.role === "host") {
-      // Verify room still exists before restoring
       apiGet(`/api/rooms/${session.roomCode}`)
         .then((data: any) => {
           setRoomCode(session.roomCode);
@@ -53,6 +52,8 @@ export default function App() {
       setPseudo(session.pseudo ?? "");
       setAvatar((session.avatar as Avatar) ?? "fox");
       setScreen("player");
+      // specialtyTheme is already stored in localStorage via saveSession below
+      // PlayerScreen reads it directly from localStorage
     }
   }, []);
 
@@ -63,6 +64,7 @@ export default function App() {
     setScreen("host-lobby");
   }
 
+  // JoinPage appelle cette fonction avec specialtyTheme inclus
   function handlePlayerJoined(
     code: string,
     info: {
@@ -70,6 +72,7 @@ export default function App() {
       sessionToken: string;
       pseudo: string;
       avatar: Avatar;
+      specialtyTheme?: string | null;
     },
   ) {
     setRoomCode(code);
@@ -77,6 +80,18 @@ export default function App() {
     setSessionToken(info.sessionToken);
     setPseudo(info.pseudo);
     setAvatar(info.avatar);
+
+    // ← C'est ici qu'on sauvegarde tout, y compris specialtyTheme
+    saveSession({
+      roomCode: code,
+      playerId: info.playerId,
+      sessionToken: info.sessionToken,
+      role: "player",
+      pseudo: info.pseudo,
+      avatar: info.avatar,
+      specialtyTheme: info.specialtyTheme ?? null,
+    });
+
     setScreen("player");
   }
 
@@ -92,6 +107,10 @@ export default function App() {
   // ── Render ─────────────────────────────────────────────────
   if (screen === "stats") {
     return <StatsPage onBack={() => setScreen("home")} />;
+  }
+
+  if (screen === "settings") {
+    return <SettingsPage onBack={() => setScreen("home")} />;
   }
 
   if (screen === "host-create") {
@@ -142,9 +161,6 @@ export default function App() {
       />
     );
   }
-
-  if (screen === "settings")
-    return <SettingsPage onBack={() => setScreen("home")} />;
 
   // Default: home
   return (

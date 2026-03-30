@@ -1,16 +1,22 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: '0.0.0.0',   // accessible depuis tout le réseau local
+    host: "0.0.0.0", // accessible depuis tout le réseau local
     port: 5173,
-    strictPort: true,  // échoue si le port est déjà pris
+    strictPort: true, // échoue si le port est déjà pris
+    allowedHosts: [
+      "anv44srv.ddns.net", // ← ton hostname DDNS exact
+    ],
   },
   preview: {
-    host: '0.0.0.0',
+    host: "0.0.0.0",
     port: 5173,
     strictPort: true,
+    allowedHosts: [
+      "anv44srv.ddns.net", // ← ton hostname DDNS exact
+    ],
   },
 });

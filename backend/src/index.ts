@@ -16,6 +16,9 @@ const config = {
   port: parseInt(process.env.PORT ?? "4000", 10),
   nodeEnv: process.env.NODE_ENV ?? "development",
   redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379",
+  corsOrigins: process.env.CORS_ORIGINS?.split(",") ?? [
+    "http://localhost:5173",
+  ],
 };
 
 const app = express();
