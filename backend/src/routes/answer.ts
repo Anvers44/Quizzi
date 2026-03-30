@@ -15,8 +15,8 @@ const MAX_BONUS: Record<Difficulty, number> = {
   medium: 400,
   hard: 600,
 };
-const SPECIALTY_BONUS_MULT = 1.2; // +20% if correct on specialty theme
-const SPECIALTY_WRONG_PEN = 100; // -100 pts if wrong on specialty theme
+const SPECIALTY_BONUS_MULT = 1.2; // +20% si bonne réponse sur thème spécialité
+const SPECIALTY_WRONG_PEN = 100; // -100 pts si mauvaise réponse sur thème spécialité
 
 function computePoints(
   correct: boolean,
@@ -75,22 +75,23 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     player.doubleNextAnswer && correct,
   );
 
-  // Specialty theme modifier
+  // Modificateur thème spécialité
   const isSpecialty =
     player.specialtyTheme && player.specialtyTheme === question.theme;
   if (isSpecialty) {
     if (correct) {
-      // +20% on specialty correct
+      // +20% sur bonne réponse spécialité
       points = Math.round((points * SPECIALTY_BONUS_MULT) / 50) * 50;
     } else {
-      // -100pts on specialty wrong (min 0)
-      points = Math.max(0, player.score - SPECIALTY_WRONG_PEN) - player.score;
-      // Actually apply penalty separately to avoid confusion
+      // Pénalité sur mauvaise réponse spécialité
       points = -SPECIALTY_WRONG_PEN;
     }
   }
 
   if (correct && player.doubleNextAnswer) player.doubleNextAnswer = false;
+
+  // scoreDelta représente le vrai delta (peut être négatif pour pénalité spécialité)
+  const scoreDelta = points;
 
   const answer: PlayerAnswer = {
     playerId,
@@ -98,7 +99,7 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     choiceIndex,
     answeredAt: Date.now(),
     correct,
-    points: Math.max(points, 0),
+    points: Math.max(scoreDelta, 0), // pour les stats individuelles, on ne stocke pas de valeur négative
     timeTaken,
   };
 
@@ -108,8 +109,9 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
       .status(409)
       .json({ error: "Réponse déjà envoyée", alreadyAnswered: true });
 
-  // Apply score (specialty penalty can go negative temporarily but score never below 0)
-  player.score = Math.max(0, player.score + points);
+  // Appliquer le delta au score (jamais en dessous de 0)
+  player.score = Math.max(0, player.score + scoreDelta);
+
   if (!player.answeredQuestions.includes(questionId))
     player.answeredQuestions.push(questionId);
   if (!player.answers) player.answers = {};
@@ -124,8 +126,8 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
 
   if (!state.lastQuestionPoints) state.lastQuestionPoints = {};
   if (!state.lastQuestionTimes) state.lastQuestionTimes = {};
-  // Store actual delta (can be negative for specialty penalty)
-  state.lastQuestionPoints[playerId] = points;
+  // On stocke le vrai delta (y compris négatif) pour l'affichage révélation
+  state.lastQuestionPoints[playerId] = scoreDelta;
   state.lastQuestionTimes[playerId] = timeTaken;
 
   if (
@@ -135,7 +137,7 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
   ) {
     state.teams[player.teamId].score = Math.max(
       0,
-      state.teams[player.teamId].score + Math.max(0, points),
+      state.teams[player.teamId].score + Math.max(0, scoreDelta),
     );
   }
 

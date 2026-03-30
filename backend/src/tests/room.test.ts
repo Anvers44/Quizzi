@@ -9,17 +9,33 @@ vi.mock("../redis/helpers", () => ({
 
 import { getRoom, saveRoom, recordAnswerIfNew } from "../redis/helpers";
 import type { GameState } from "../types";
-import { QUESTIONS } from "../data/questions";
+import { QUESTION_BANK } from "../data/questions";
 
 function makeRoom(overrides: Partial<GameState> = {}): GameState {
   return {
     roomCode: "ABCDEF",
     hostSocketId: "",
     status: "lobby",
+    config: {
+      mode: "classic",
+      themes: ["all"],
+      difficulty: "all",
+      rounds: 3,
+      questionsPerRound: 5,
+      powersEnabled: false,
+      teamCount: 2,
+    },
     players: {},
-    questions: QUESTIONS,
+    questions: QUESTION_BANK.slice(0, 5),
     currentQuestionIndex: 0,
     questionStartedAt: null,
+    pausedAt: null,
+    timeElapsedBeforePause: 0,
+    currentRound: 1,
+    eliminatedPlayerIds: [],
+    teams: {},
+    lastQuestionPoints: {},
+    lastQuestionTimes: {},
     ...overrides,
   };
 }
@@ -59,6 +75,7 @@ describe("Anti double-soumission", () => {
       answeredAt: Date.now(),
       correct: true,
       points: 1200,
+      timeTaken: 3.5,
     };
     expect(await recordAnswerIfNew(answer, "ABCDEF")).toBe(true);
   });
@@ -72,22 +89,27 @@ describe("Anti double-soumission", () => {
       answeredAt: Date.now(),
       correct: true,
       points: 1200,
+      timeTaken: 3.5,
     };
     expect(await recordAnswerIfNew(answer, "ABCDEF")).toBe(false);
   });
 });
 
-describe("Questions statiques", () => {
-  it("contient 5 questions", () => {
-    expect(QUESTIONS).toHaveLength(5);
+describe("Banque de questions", () => {
+  it("contient au moins 10 questions", () => {
+    expect(QUESTION_BANK.length).toBeGreaterThanOrEqual(10);
   });
   it("chaque question a 4 choix", () => {
-    QUESTIONS.forEach((q) => expect(q.choices).toHaveLength(4));
+    QUESTION_BANK.forEach((q) => expect(q.choices).toHaveLength(4));
   });
   it("correctIndex est entre 0 et 3", () => {
-    QUESTIONS.forEach((q) => {
+    QUESTION_BANK.forEach((q) => {
       expect(q.correctIndex).toBeGreaterThanOrEqual(0);
       expect(q.correctIndex).toBeLessThanOrEqual(3);
     });
+  });
+  it("chaque question a un id unique", () => {
+    const ids = QUESTION_BANK.map((q) => q.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
