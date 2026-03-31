@@ -289,7 +289,6 @@ export function useRoom({
       setRoundEnd(null);
       setPaused(false);
       setLiveAnswers({});
-
       setBluffInput(null);
       setBluffVote(null);
       setBluffReveal(null);
@@ -368,13 +367,17 @@ export function useRoom({
       setAttackUsed(false);
       setDefenseUsed(false);
     };
+
     const onPowerEffect = (payload: PowerEffectPayload) => {
-      console.log("[power:effect] reçu", payload);
+      console.log("[useRoom] ⚡ power:effect reçu =", JSON.stringify(payload));
+      console.log("[useRoom] power:effect reçu", payload);
+      console.log("[useRoom] mon playerId =", playerId);
+      console.log("[useRoom] match =", payload.targetPlayerId === playerId);
       setPowerEffect(payload);
+      console.log("[useRoom] ⚡ setPowerEffect appelé");
     };
     const onPowerBlocked = (d: { byShield: boolean; mirrorSent: boolean }) => {
       setPowerBlocked(d);
-      setTimeout(() => setPowerBlocked(null), 3000);
     };
     const onError = ({ message }: { message: string }) => setError(message);
 

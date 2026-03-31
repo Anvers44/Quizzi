@@ -56,7 +56,7 @@ const COLORS_SENT = [
   "bg-yellow-900",
   "bg-green-900",
 ];
-const SHAPES = ["▲", "◆", "●", "■"];
+const SHAPES = ["A", "B", "C", "D"];
 const DIFF_STARS: Record<Difficulty, string> = {
   easy: "⭐",
   medium: "⭐⭐",
@@ -214,8 +214,10 @@ function QuestionScreen({
   paused,
   pausedTimeLeft,
   countdown,
-  powerEffect,
-  onPowerEffectHandled,
+  flipR, // ← reçu en prop depuis PlayerScreen
+  freezeR, // ← reçu en prop depuis PlayerScreen
+  blindR, // ← reçu en prop depuis PlayerScreen
+  shuffleR, // ← reçu en prop depuis PlayerScreen
   players,
   playerId,
   specialtyTheme,
@@ -234,42 +236,8 @@ function QuestionScreen({
   const lastBeep = useRef(-1);
   const lastCdBeep = useRef(-1);
 
-  // ✅ useState / useEffect importés en haut du fichier, utilisés directement
-  const [flipR, setFlipR] = useState(false);
-  const [freezeR, setFreezeR] = useState(false);
-  const [blindR, setBlindR] = useState<number | null>(null);
-  const [shuffleR, setShuffleR] = useState<number[] | null>(null);
-
-  // Dans QuestionScreen, le useEffect existant :
-  useEffect(() => {
-    console.log(
-      "[QuestionScreen] powerEffect =",
-      powerEffect,
-      "| playerId =",
-      playerId,
-    );
-    if (!powerEffect || powerEffect.targetPlayerId !== playerId) return;
-    console.log("[QuestionScreen] APPLYING effect", powerEffect.type);
-    onPowerEffectHandled?.(); // ✅ clear dès traitement
-    const t = powerEffect.type;
-    playPowerSound();
-    if (t === "flip") {
-      setFlipR(true);
-      setTimeout(() => setFlipR(false), 5000);
-    }
-    if (t === "freeze") {
-      setFreezeR(true);
-      setTimeout(() => setFreezeR(false), 4000);
-    }
-    if (t === "blind") {
-      setBlindR(powerEffect.hiddenChoiceIndex ?? 0);
-      setTimeout(() => setBlindR(null), 8000);
-    }
-    if (t === "shuffle") {
-      setShuffleR(powerEffect.newChoiceOrder ?? null);
-      setTimeout(() => setShuffleR(null), 6000);
-    }
-  }, [powerEffect, playerId]);
+  // ✅ Plus de useState pour flipR/freezeR/blindR/shuffleR ici
+  // ✅ Plus de useEffect pour powerEffect ici
 
   useEffect(() => {
     if (countdown > 0 && countdown !== lastCdBeep.current) {
@@ -337,11 +305,7 @@ function QuestionScreen({
             )}
           </div>
           <span
-            className={`font-bold tabular-nums ${
-              display <= 5 && !paused && !countdown
-                ? "text-red-400 animate-timerPulse"
-                : "text-white"
-            }`}
+            className={`font-bold tabular-nums ${display <= 5 && !paused && !countdown ? "text-red-400 animate-timerPulse" : "text-white"}`}
           >
             {paused ? "⏸ " : ""}
             {countdown > 0 ? `⏳ ${countdown}` : `${display}s`}
@@ -389,7 +353,7 @@ function QuestionScreen({
           </p>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-2 w-full max-w-sm pb-2">
+      <div className="flex flex-col gap-2 w-full max-w-sm pb-2">
         {displayChoices.map(
           (
             { text, origIndex }: { text: string; origIndex: number },
@@ -537,6 +501,64 @@ export default function PlayerScreen({
   }
 
   const isEliminated = state?.eliminatedPlayerIds?.includes(playerId);
+  const appliedEffect = useRef<string | null>(null);
+  const [flipR, setFlipR] = useState(false);
+  const [freezeR, setFreezeR] = useState(false);
+  const [blindR, setBlindR] = useState<number | null>(null);
+  const [shuffleR, setShuffleR] = useState<number[] | null>(null);
+
+  useEffect(() => {
+    console.log(
+      "[PlayerScreen] useEffect powerEffect déclenché =",
+      powerEffect,
+    );
+    console.log("[PlayerScreen] playerId =", playerId);
+    if (!powerEffect) {
+      console.log("[PlayerScreen] powerEffect est null → skip");
+      return;
+    }
+    if (powerEffect.targetPlayerId !== playerId) {
+      console.log(
+        "[PlayerScreen] targetPlayerId",
+        powerEffect.targetPlayerId,
+        "≠ playerId",
+        playerId,
+        "→ skip",
+      );
+      return;
+    }
+    const key = `${powerEffect.type}-${powerEffect.fromPlayerId}`;
+    console.log(
+      "[PlayerScreen] key =",
+      key,
+      "| appliedEffect =",
+      appliedEffect.current,
+    );
+    if (appliedEffect.current === key) {
+      console.log("[PlayerScreen] déjà appliqué → skip");
+      return;
+    }
+    appliedEffect.current = key;
+    console.log("[PlayerScreen] ✅ APPLICATION de", powerEffect.type);
+
+    playPowerSound();
+    if (powerEffect.type === "flip") {
+      setFlipR(true);
+      setTimeout(() => setFlipR(false), 5000);
+    }
+    if (powerEffect.type === "freeze") {
+      setFreezeR(true);
+      setTimeout(() => setFreezeR(false), 4000);
+    }
+    if (powerEffect.type === "blind") {
+      setBlindR(powerEffect.hiddenChoiceIndex ?? 0);
+      setTimeout(() => setBlindR(null), 8000);
+    }
+    if (powerEffect.type === "shuffle") {
+      setShuffleR(powerEffect.newChoiceOrder ?? null);
+      setTimeout(() => setShuffleR(null), 6000);
+    }
+  }, [powerEffect, playerId]);
 
   // ── Bluff phases ──────────────────────────────────────────
 
@@ -550,21 +572,6 @@ export default function PlayerScreen({
           pseudo={pseudo}
           avatar={avatar}
         />
-        {/* ✅ Pouvoirs disponibles après bluff aussi */}
-        {config?.powersEnabled && (
-          <div className="fixed bottom-4 left-0 right-0 flex justify-center px-4 z-50">
-            <PowerRevealPanel
-              attackPower={attackPower}
-              defensePower={defensePower}
-              attackUsed={attackUsed}
-              defenseUsed={defenseUsed}
-              players={players}
-              playerId={playerId}
-              onUseAttack={useAttack}
-              onUseDefense={useDefense}
-            />
-          </div>
-        )}
       </>
     );
 
@@ -669,6 +676,10 @@ export default function PlayerScreen({
           paused={paused}
           pausedTimeLeft={pausedTimeLeft}
           countdown={countdown}
+          flipR={flipR} // ✅
+          freezeR={freezeR} // ✅
+          blindR={blindR} // ✅
+          shuffleR={shuffleR} // ✅
           powerEffect={powerEffect}
           onPowerEffectHandled={clearPowerEffect}
           players={players}
@@ -819,7 +830,7 @@ function RevealScreen({
     specialtyTheme &&
     specialtyTheme !== "none" &&
     reveal.questionTheme === specialtyTheme;
-  const SHAPES2 = ["▲", "◆", "●", "■"];
+  const SHAPES2 = ["A", "B", "C", "D"];
 
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center gap-3 p-5 overflow-y-auto">
@@ -908,25 +919,33 @@ function RevealScreen({
         />
       )}
       {question && (
+        // Dans RevealScreen, remplace le bloc des choices :
         <div className="w-full max-w-sm flex flex-col gap-2">
           {question.choices.map((choice: string, i: number) => {
+            const LETTERS = ["A", "B", "C", "D"];
             const isCorrect = i === reveal.correctIndex;
             const iMine = myChoice === i;
             const voters = reveal.scores.filter(
               (p: any) => reveal.playerAnswers?.[p.id] === i,
             );
+            const voterCount = voters.length;
             return (
               <div
                 key={i}
                 className={`rounded-xl px-4 py-3 flex flex-col gap-1 animate-slideUp ${
                   isCorrect
                     ? "ring-2 ring-green-400 bg-indigo-700"
-                    : "bg-indigo-800/50"
-                } ${iMine && !isCorrect ? "ring-2 ring-red-400" : ""}`}
+                    : iMine
+                      ? "bg-red-500/20 ring-2 ring-red-400"
+                      : "bg-indigo-800/50"
+                }`}
                 style={{ animationDelay: `${i * 0.07}s` }}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-white font-bold">{SHAPES2[i]}</span>
+                  {/* ✅ Badge lettre A B C D */}
+                  <span className="bg-white/20 rounded-xl w-8 h-8 flex items-center justify-center font-extrabold text-sm text-white shrink-0">
+                    {LETTERS[i]}
+                  </span>
                   <span className="text-white text-sm font-semibold flex-1">
                     {choice}
                   </span>
@@ -937,20 +956,31 @@ function RevealScreen({
                   {iMine && isCorrect && (
                     <span className="text-green-300 text-sm">← toi ✅</span>
                   )}
+                  <span className="text-white/70 text-xs">
+                    {voterCount} joueur{voterCount > 1 ? "s" : ""}
+                  </span>
                 </div>
                 {voters.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 pl-1">
                     {voters.map((p: any) => (
                       <div
                         key={p.id}
-                        className="flex items-center gap-1 text-sm"
+                        className="flex items-center gap-1 bg-white/20 rounded-lg px-2 py-0.5"
                       >
                         <span title={p.pseudo}>
                           {AVATAR_EMOJI[p.avatar as Avatar] || p.avatar}
                         </span>
+                        <span className="text-white text-xs font-semibold">
+                          {p.pseudo}
+                        </span>
                         {reveal.timeTaken?.[p.id] !== undefined && (
-                          <span className="text-indigo-400 text-xs">
+                          <span className="text-white/60 text-xs">
                             {reveal.timeTaken[p.id].toFixed(1)}s
+                          </span>
+                        )}
+                        {reveal.pointsEarned?.[p.id] > 0 && (
+                          <span className="text-green-300 text-xs font-bold">
+                            +{reveal.pointsEarned[p.id]}
                           </span>
                         )}
                       </div>

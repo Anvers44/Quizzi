@@ -90,6 +90,43 @@ export interface PowerEffectPayload {
   newChoiceOrder?: number[];
 }
 
+export interface BluffInputPayload {
+  id: string;
+  text: string;
+  theme: string;
+  difficulty: "easy" | "medium" | "hard";
+  timeLimit: number;
+  startedAt: number;
+  isRoundStart: boolean;
+  round: number;
+  totalRounds: number;
+  imageUrl?: string;
+}
+
+export interface BluffVotePayload {
+  options: { letter: string; text: string }[];
+  timeLimit: number;
+  startedAt: number;
+  question: string;
+}
+
+export interface BluffRevealPayload {
+  questionId: string;
+  question: string;
+  correctAnswer: string;
+  options: {
+    letter: string;
+    text: string;
+    isReal: boolean;
+    authorId?: string;
+  }[];
+  votes: Record<string, string>;
+  pointsEarned: Record<string, number>;
+  scores: PublicPlayer[];
+  teams: Record<string, { id: string; name: string; score: number }>;
+  authorPseudos: Record<string, string>;
+}
+
 export interface ClientToServerEvents {
   "host:join": (d: { roomCode: string }) => void;
   "player:join": (d: {
@@ -112,11 +149,17 @@ export interface ClientToServerEvents {
     roomCode: string;
     assignments: Record<string, string>;
   }) => void;
-  "player:use_attack": (d: {
+  "player:bluff_submit": (d: {
     roomCode: string;
     playerId: string;
     sessionToken: string;
-    targetPlayerId: string;
+    text: string;
+  }) => void;
+  "player:bluff_vote": (d: {
+    roomCode: string;
+    playerId: string;
+    sessionToken: string;
+    letter: string;
   }) => void;
   "player:use_defense": (d: {
     roomCode: string;
@@ -148,5 +191,15 @@ export interface ServerToClientEvents {
   }) => void;
   "power:effect": (d: PowerEffectPayload) => void;
   "power:blocked": (d: { byShield: boolean; mirrorSent: boolean }) => void;
+  // ✅ Bluff events manquants
+  "bluff:input_start": (d: BluffInputPayload) => void;
+  "bluff:submitted": (d: {
+    playerId: string;
+    count: number;
+    total: number;
+  }) => void;
+  "bluff:vote_start": (d: BluffVotePayload) => void;
+  "bluff:voted": (d: { playerId: string }) => void;
+  "bluff:reveal": (d: BluffRevealPayload) => void;
   error: (d: { message: string }) => void;
 }

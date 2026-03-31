@@ -52,8 +52,10 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
   const player = state.players[playerId];
   if (!player || player.sessionToken !== sessionToken)
     return res.status(401).json({ error: "Session invalide" });
-  if (state.status !== "playing")
+  if (state.status !== "playing") {
+    console.log("[answer] status =", state.status, "questionId =", questionId);
     return res.status(400).json({ error: "Aucune question en cours" });
+  }
 
   const question = state.questions[state.currentQuestionIndex];
   if (!question || question.id !== questionId)

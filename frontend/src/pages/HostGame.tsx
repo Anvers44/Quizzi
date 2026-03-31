@@ -18,7 +18,7 @@ interface Props {
   onLeave: () => void;
 }
 
-const SHAPES = ["▲", "◆", "●", "■"];
+const LETTERS = ["A", "B", "C", "D"];
 const COLORS = ["bg-red-500", "bg-blue-500", "bg-yellow-500", "bg-green-500"];
 const COLORS_DIM = [
   "bg-red-500/20",
@@ -146,11 +146,13 @@ function HostQuestion({
           {question.text}
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-2 max-w-4xl mx-auto w-full">
+      <div className="flex flex-col gap-2 max-w-4xl mx-auto w-full">
         {question.choices.map((choice: string, i: number) => (
-          <div key={i} className={`${COLORS[i]} rounded-2xl px-4 py-4`}>
-            <div className="flex items-center gap-2">
-              <span className="text-white font-bold text-lg">{SHAPES[i]}</span>
+          <div key={i} className={`${COLORS[i]} rounded-2xl px-4 py-3`}>
+            <div className="flex items-center gap-3">
+              <span className="bg-white/20 rounded-xl w-8 h-8 flex items-center justify-center font-extrabold text-sm text-white shrink-0">
+                {LETTERS[i]}
+              </span>
               <span className="text-white text-sm font-semibold flex-1">
                 {choice}
               </span>
@@ -219,7 +221,7 @@ function HostReveal({
       <p className="text-white text-lg font-bold text-center px-4">
         {question.text}
       </p>
-      <div className="grid grid-cols-2 gap-2 max-w-4xl mx-auto w-full">
+      <div className="flex flex-col gap-2 max-w-4xl mx-auto w-full">
         {question.choices.map((choice: string, i: number) => {
           const isCorrect = i === reveal.correctIndex;
           const respondents = reveal.scores.filter(
@@ -230,8 +232,10 @@ function HostReveal({
               key={i}
               className={`${isCorrect ? COLORS[i] + " ring-4 ring-white" : COLORS_DIM[i]} rounded-2xl px-4 py-3`}
             >
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-white font-bold">{SHAPES[i]}</span>
+              <div className="flex items-center gap-3 mb-1">
+                <span className="bg-white/20 rounded-xl w-8 h-8 flex items-center justify-center font-extrabold text-sm text-white shrink-0">
+                  {LETTERS[i]}
+                </span>
                 <span className="text-white text-sm font-semibold flex-1">
                   {choice}
                 </span>
@@ -240,7 +244,7 @@ function HostReveal({
                   {respondents.length} joueur{respondents.length > 1 ? "s" : ""}
                 </span>
               </div>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1 pl-1">
                 {respondents.map((p: any) => (
                   <div
                     key={p.id}

@@ -656,12 +656,55 @@ export function registerSocketHandlers(io: AppServer) {
       socket.join(code);
       socket.emit("room:state", toRoomState(state));
       scheduleExpiry(io, code);
+
       if (state.status === "playing" || state.status === "paused") {
         const qp = makeQPayload(state);
         if (qp) socket.emit("question:start", qp);
+        if (state.status === "paused") {
+          const q = state.questions[state.currentQuestionIndex];
+          socket.emit("game:paused", {
+            timeLeft: Math.ceil(
+              Math.max(0, q.timeLimit - state.timeElapsedBeforePause),
+            ),
+          });
+        }
       }
-      if (state.status === "bluff_input" || state.status === "bluff_voting") {
+
+      // ✅ AJOUT : host rafraîchit pendant la révélation
+      if (state.status === "revealing") {
+        const qp = makeQPayload(state);
+        if (qp) socket.emit("question:start", qp);
         const q = state.questions[state.currentQuestionIndex];
+        const playerAnswers: Record<string, number> = {};
+        for (const p of Object.values(state.players)) {
+          const ci = p.answers?.[q.id];
+          if (ci !== undefined) playerAnswers[p.id] = ci;
+        }
+        socket.emit("question:reveal", {
+          questionId: q.id,
+          correctIndex: q.correctIndex,
+          scores: toPublicPlayers(state),
+          playerAnswers,
+          teams: state.teams,
+          pointsEarned: state.lastQuestionPoints || {},
+          timeTaken: state.lastQuestionTimes || {},
+          questionTheme: q.theme,
+        });
+      }
+
+      // ✅ AJOUT : host rafraîchit pendant round_end
+      if (state.status === "round_end") {
+        io.to(code).emit("game:round_end", {
+          round: state.currentRound,
+          totalRounds: state.config.rounds,
+          scores: toPublicPlayers(state),
+          teams: state.teams,
+          perfectBonuses: {},
+        });
+      }
+
+      if (state.status === "bluff_input" || state.status === "bluff_voting") {
+        const q = state.questions[state.currentQuestionIndex]; // ✅ déclaré UNE FOIS ici
         if (state.status === "bluff_input" && q) {
           socket.emit("bluff:input_start", {
             id: q.id,
@@ -676,16 +719,16 @@ export function registerSocketHandlers(io: AppServer) {
             imageUrl: q.imageUrl,
           });
         }
-        if (state.status === "bluff_voting" && state.bluffOptions) {
+        if (state.status === "bluff_voting" && state.bluffOptions && q) {
           socket.emit("bluff:vote_start", {
             options: state.bluffOptions.map(({ letter, text }) => ({
               letter,
               text,
-              question: q.text,
             })),
             timeLimit: BLUFF_VOTE_SECS,
             startedAt:
               (state.bluffDeadline ?? Date.now()) - BLUFF_VOTE_SECS * 1000,
+            question: q.text, // ✅ q est bien défini maintenant
           });
         }
       }
@@ -761,16 +804,18 @@ export function registerSocketHandlers(io: AppServer) {
           imageUrl: q.imageUrl,
         });
       }
+      // Dans player:join, remplace le bloc bluff_voting par :
       if (state.status === "bluff_voting" && state.bluffOptions) {
+        const q = state.questions[state.currentQuestionIndex]; // ✅ déclaré ici
         socket.emit("bluff:vote_start", {
           options: state.bluffOptions.map(({ letter, text }) => ({
             letter,
             text,
-            question: q.text,
           })),
           timeLimit: BLUFF_VOTE_SECS,
           startedAt:
             (state.bluffDeadline ?? Date.now()) - BLUFF_VOTE_SECS * 1000,
+          question: q?.text ?? "",
         });
       }
     });
@@ -868,6 +913,8 @@ export function registerSocketHandlers(io: AppServer) {
           await endRound(io, code);
         } else {
           state.currentQuestionIndex++;
+          state.lastQuestionPoints = {};
+          state.lastQuestionTimes = {};
           await saveRoom(state);
           await startQuestion(io, code);
         }
@@ -931,15 +978,22 @@ export function registerSocketHandlers(io: AppServer) {
               attacker.avatar,
               attacker.pseudo,
             );
-            io.to(code).emit("power:effect", {
-              type: power,
-              fromPlayerId: target.id,
-              fromPseudo: target.pseudo,
-              fromAvatar: target.avatar,
-              targetPlayerId: playerId,
-              hiddenChoiceIndex: Math.floor(Math.random() * 4),
-              newChoiceOrder: [0, 1, 2, 3].sort(() => Math.random() - 0.5),
-            });
+            const targetEntry = [...socketMap.entries()].find(
+              ([, v]) => v.playerId === targetPlayerId && v.roomCode === code,
+            );
+            const targetSocketId = targetEntry?.[0];
+            if (targetSocketId) {
+              io.to(targetSocketId).emit("power:effect", {
+                type: power,
+                fromPlayerId: playerId,
+                fromPseudo: attacker.pseudo,
+                fromAvatar: attacker.avatar,
+                targetPlayerId,
+                hiddenChoiceIndex: Math.floor(Math.random() * 4),
+                newChoiceOrder: [0, 1, 2, 3].sort(() => Math.random() - 0.5),
+              });
+            }
+            io.to(code).emit("room:state", toRoomState(state));
           }
           await saveRoom(state);
           socket.emit("power:blocked", {
