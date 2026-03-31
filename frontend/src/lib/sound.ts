@@ -1,5 +1,5 @@
 /**
- * sound.ts — Web Audio beeps + vibration
+ * sound.ts — Web Audio beeps + vibration + background music
  *
  * iOS requires AudioContext to be created/resumed inside a user-gesture handler.
  * Strategy: create the context lazily on first user interaction, then reuse it.
@@ -32,7 +32,6 @@ export function unlockAudio(): void {
   } else {
     _unlocked = true;
   }
-  // Play a silent buffer to fully unlock iOS
   try {
     const buf = ctx.createBuffer(1, 1, 22050);
     const src = ctx.createBufferSource();
@@ -42,11 +41,11 @@ export function unlockAudio(): void {
   } catch {}
 }
 
-// Settings-aware beep
+// Settings-aware
 function isEnabled(): boolean {
   try {
     const s = JSON.parse(localStorage.getItem("quiz_settings") || "{}");
-    return s.soundEnabled !== false; // default true
+    return s.soundEnabled !== false;
   } catch {
     return true;
   }
@@ -63,9 +62,6 @@ function isVibrationEnabled(): boolean {
 
 /**
  * Play a short beep.
- * @param frequency Hz
- * @param duration  ms
- * @param type      oscillator type
  */
 export function playBeep(
   frequency = 880,
@@ -76,18 +72,12 @@ export function playBeep(
   if (!isEnabled()) return;
   const ctx = getCtx();
   if (!ctx) return;
-
-  // Auto-unlock on call (works if we're inside a gesture chain)
-  if (ctx.state === "suspended") {
-    ctx.resume().catch(() => {});
-  }
-
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
   try {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
-
     osc.type = type;
     osc.frequency.setValueAtTime(frequency, ctx.currentTime);
     gain.gain.setValueAtTime(volume, ctx.currentTime);
@@ -95,54 +85,118 @@ export function playBeep(
       0.001,
       ctx.currentTime + duration / 1000,
     );
-
     osc.start(ctx.currentTime);
     osc.stop(ctx.currentTime + duration / 1000);
   } catch {}
 }
 
-/** Countdown tick (high beep) */
 export function playTickBeep(): void {
   playBeep(880, 80, "sine", 0.25);
 }
 
-/** Final beep before time-out (lower, more urgent) */
 export function playUrgentBeep(): void {
   playBeep(440, 150, "square", 0.3);
 }
 
-/** Power used / received */
 export function playPowerSound(): void {
   playBeep(660, 120, "triangle", 0.35);
   setTimeout(() => playBeep(990, 80, "triangle", 0.2), 130);
 }
 
-/** Correct answer */
 export function playCorrectSound(): void {
-  playBeep(523, 80, "sine", 0.3); // C5
-  setTimeout(() => playBeep(659, 80, "sine", 0.3), 90); // E5
-  setTimeout(() => playBeep(784, 120, "sine", 0.3), 180); // G5
+  playBeep(523, 80, "sine", 0.3);
+  setTimeout(() => playBeep(659, 80, "sine", 0.3), 90);
+  setTimeout(() => playBeep(784, 120, "sine", 0.3), 180);
 }
 
-/** Wrong answer */
 export function playWrongSound(): void {
   playBeep(300, 200, "sawtooth", 0.2);
 }
 
-/** Countdown start (beginning of round) */
 export function playCountdownStart(): void {
   playBeep(660, 100, "sine", 0.2);
 }
 
-/**
- * Vibrate. Safe on all browsers:
- * - Android Chrome: works
- * - iOS: silently ignored (no support)
- * - Desktop: silently ignored
- */
 export function vibrate(pattern: number | number[]): void {
   if (!isVibrationEnabled()) return;
   try {
     if (navigator.vibrate) navigator.vibrate(pattern);
   } catch {}
+}
+
+// ─── Background music ─────────────────────────────────────────
+// Soft ambient pad using a I–vi–IV–V chord loop.
+// Volume is intentionally low (0.025) so it doesn't mask sound effects.
+
+let _bgActive = false;
+let _bgTimeout: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Chord progression to loop: C – Am – F – G (each 2.5 s)
+ * Frequencies are one octave lower than standard to stay ambient.
+ */
+const BG_CHORDS: number[][] = [
+  [130.81, 164.81, 196.0], // C3 E3 G3
+  [110.0, 130.81, 164.81], // A2 C3 E3
+  [87.31, 110.0, 130.81], // F2 A2 C3
+  [98.0, 123.47, 146.83], // G2 B2 D3
+];
+const BG_CHORD_DURATION = 2.5; // seconds per chord
+const BG_VOLUME = 0.025;
+
+function _scheduleLoop(): void {
+  if (!_bgActive) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    ctx.resume().catch(() => {});
+  }
+
+  const now = ctx.currentTime;
+  BG_CHORDS.forEach((freqs, i) => {
+    const start = now + i * BG_CHORD_DURATION;
+    const dur = BG_CHORD_DURATION;
+    freqs.forEach((freq) => {
+      try {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(BG_VOLUME, start + 0.6);
+        gain.gain.setValueAtTime(BG_VOLUME, start + dur - 0.6);
+        gain.gain.linearRampToValueAtTime(0, start + dur);
+        osc.start(start);
+        osc.stop(start + dur);
+      } catch {}
+    });
+  });
+
+  const totalMs = BG_CHORDS.length * BG_CHORD_DURATION * 1000;
+  // Re-schedule slightly before the loop ends to avoid silence gap
+  _bgTimeout = setTimeout(_scheduleLoop, totalMs - 300);
+}
+
+/**
+ * Start the background ambient music loop.
+ * Safe to call multiple times — won't stack.
+ */
+export function startBackgroundMusic(): void {
+  if (_bgActive) return;
+  if (!isEnabled()) return;
+  _bgActive = true;
+  _scheduleLoop();
+}
+
+/**
+ * Stop the background ambient music loop.
+ */
+export function stopBackgroundMusic(): void {
+  _bgActive = false;
+  if (_bgTimeout !== null) {
+    clearTimeout(_bgTimeout);
+    _bgTimeout = null;
+  }
 }
