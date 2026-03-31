@@ -9,8 +9,11 @@ import type {
   FinishedPayload,
   PowerEffectPayload,
   TeamPublic,
+  BluffInputPayload,
+  BluffVotePayload,
+  BluffRevealPayload,
 } from "../socket-events";
-import type { AttackPower, DefensePower, PowerType } from "../types";
+import type { AttackPower, DefensePower } from "../types";
 
 interface UseRoomOptions {
   role: "host" | "player";
@@ -31,7 +34,6 @@ export interface RoomHookState {
   finished: FinishedPayload | null;
   paused: boolean;
   pausedTimeLeft: number;
-  // Countdown: only fires at round start, counts down to 0
   countdown: number;
   liveAnswers: Record<string, true>;
   attackPower: AttackPower | null;
@@ -41,6 +43,14 @@ export interface RoomHookState {
   powerEffect: PowerEffectPayload | null;
   powerBlocked: { byShield: boolean; mirrorSent: boolean } | null;
   teams: Record<string, TeamPublic>;
+  // Bluff
+  bluffInput: BluffInputPayload | null;
+  bluffVote: BluffVotePayload | null;
+  bluffReveal: BluffRevealPayload | null;
+  bluffSubmitCount: number;
+  bluffSubmitTotal: number;
+  bluffVotedCount: number;
+  // Actions
   leave: () => void;
   startGame: () => void;
   nextQuestion: () => void;
@@ -50,6 +60,8 @@ export interface RoomHookState {
   useAttack: (targetPlayerId: string) => void;
   useDefense: () => void;
   clearPowerEffect: () => void;
+  submitBluff: (text: string) => void;
+  voteBluff: (letter: string) => void;
 }
 
 export function useRoom({
@@ -83,9 +95,18 @@ export function useRoom({
     mirrorSent: boolean;
   } | null>(null);
   const [teams, setTeams] = useState<Record<string, TeamPublic>>({});
+  // Bluff
+  const [bluffInput, setBluffInput] = useState<BluffInputPayload | null>(null);
+  const [bluffVote, setBluffVote] = useState<BluffVotePayload | null>(null);
+  const [bluffReveal, setBluffReveal] = useState<BluffRevealPayload | null>(
+    null,
+  );
+  const [bluffSubmitCount, setBluffSubmitCount] = useState(0);
+  const [bluffSubmitTotal, setBluffSubmitTotal] = useState(0);
+  const [bluffVotedCount, setBluffVotedCount] = useState(0);
+
   const cdTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Countdown ticker — authoritative server timestamp
   function startCountdown(serverStartedAt: number) {
     if (cdTimer.current) {
       clearInterval(cdTimer.current);
@@ -104,7 +125,7 @@ export function useRoom({
       }
     };
     tick();
-    cdTimer.current = setInterval(tick, 100); // 100ms for precision
+    cdTimer.current = setInterval(tick, 100);
   }
 
   const leave = useCallback(() => {
@@ -159,6 +180,32 @@ export function useRoom({
     });
     setDefenseUsed(true);
   }, [roomCode, playerId, sessionToken]);
+
+  const submitBluff = useCallback(
+    (text: string) => {
+      if (!playerId || !sessionToken) return;
+      getSocket().emit("player:bluff_submit", {
+        roomCode,
+        playerId,
+        sessionToken,
+        text,
+      });
+    },
+    [roomCode, playerId, sessionToken],
+  );
+
+  const voteBluff = useCallback(
+    (letter: string) => {
+      if (!playerId || !sessionToken) return;
+      getSocket().emit("player:bluff_vote", {
+        roomCode,
+        playerId,
+        sessionToken,
+        letter,
+      });
+    },
+    [roomCode, playerId, sessionToken],
+  );
 
   useEffect(() => {
     const socket = getSocket();
@@ -242,20 +289,18 @@ export function useRoom({
       setRoundEnd(null);
       setPaused(false);
       setLiveAnswers({});
+
+      setBluffInput(null);
+      setBluffVote(null);
+      setBluffReveal(null);
       setState((prev) =>
         prev
           ? { ...prev, status: "playing", currentQuestionIndex: payload.index }
           : prev,
       );
-
-      // Countdown only at round start
-      if (payload.isRoundStart) {
-        startCountdown(payload.startedAt);
-      } else {
-        setCountdown(0);
-      }
+      if (payload.isRoundStart) startCountdown(payload.startedAt);
+      else setCountdown(0);
     };
-
     const onReveal = (payload: RevealPayload) => {
       setReveal(payload);
       setTeams(payload.teams);
@@ -311,7 +356,6 @@ export function useRoom({
     }: {
       teams: Record<string, TeamPublic>;
     }) => setTeams(t);
-
     const onPowersAssigned = ({
       attackPower: ap,
       defensePower: dp,
@@ -325,15 +369,62 @@ export function useRoom({
       setDefenseUsed(false);
     };
     const onPowerEffect = (payload: PowerEffectPayload) => {
-      // Show to target AND to everyone (so they see the notification)
+      console.log("[power:effect] reçu", payload);
       setPowerEffect(payload);
-      setTimeout(() => setPowerEffect(null), 4000);
     };
     const onPowerBlocked = (d: { byShield: boolean; mirrorSent: boolean }) => {
       setPowerBlocked(d);
       setTimeout(() => setPowerBlocked(null), 3000);
     };
     const onError = ({ message }: { message: string }) => setError(message);
+
+    // ── Bluff events ──────────────────────────────────────────
+    const onBluffInputStart = (payload: BluffInputPayload) => {
+      setBluffInput(payload);
+      setBluffVote(null);
+      setBluffReveal(null);
+      setBluffSubmitCount(0);
+      setBluffVotedCount(0);
+      setReveal(null);
+      setQuestion(null);
+      setState((prev) => (prev ? { ...prev, status: "bluff_input" } : prev));
+      if (payload.isRoundStart) startCountdown(payload.startedAt);
+      else setCountdown(0);
+    };
+    const onBluffSubmitted = ({
+      count,
+      total,
+    }: {
+      playerId: string;
+      count: number;
+      total: number;
+    }) => {
+      setBluffSubmitCount(count);
+      setBluffSubmitTotal(total);
+    };
+    const onBluffVoteStart = (payload: BluffVotePayload) => {
+      setBluffVote(payload);
+      setBluffInput(null);
+      setState((prev) => (prev ? { ...prev, status: "bluff_voting" } : prev));
+    };
+    const onBluffVoted = () => {
+      setBluffVotedCount((c) => c + 1);
+    };
+    const onBluffReveal = (payload: BluffRevealPayload) => {
+      setBluffReveal(payload);
+      setBluffVote(null);
+      setTeams(payload.teams);
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "revealing",
+              players: payload.scores,
+              teams: payload.teams,
+            }
+          : prev,
+      );
+    };
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
@@ -354,6 +445,11 @@ export function useRoom({
     socket.on("powers:assigned", onPowersAssigned);
     socket.on("power:effect", onPowerEffect);
     socket.on("power:blocked", onPowerBlocked);
+    socket.on("bluff:input_start", onBluffInputStart);
+    socket.on("bluff:submitted", onBluffSubmitted);
+    socket.on("bluff:vote_start", onBluffVoteStart);
+    socket.on("bluff:voted", onBluffVoted);
+    socket.on("bluff:reveal", onBluffReveal);
     socket.on("error", onError);
 
     if (socket.connected) {
@@ -382,6 +478,11 @@ export function useRoom({
       socket.off("powers:assigned", onPowersAssigned);
       socket.off("power:effect", onPowerEffect);
       socket.off("power:blocked", onPowerBlocked);
+      socket.off("bluff:input_start", onBluffInputStart);
+      socket.off("bluff:submitted", onBluffSubmitted);
+      socket.off("bluff:vote_start", onBluffVoteStart);
+      socket.off("bluff:voted", onBluffVoted);
+      socket.off("bluff:reveal", onBluffReveal);
       socket.off("error", onError);
     };
   }, [role, roomCode, playerId, sessionToken]);
@@ -407,6 +508,12 @@ export function useRoom({
     powerEffect,
     powerBlocked,
     teams,
+    bluffInput,
+    bluffVote,
+    bluffReveal,
+    bluffSubmitCount,
+    bluffSubmitTotal,
+    bluffVotedCount,
     leave,
     startGame,
     nextQuestion,
@@ -416,5 +523,7 @@ export function useRoom({
     useAttack,
     useDefense,
     clearPowerEffect,
+    submitBluff,
+    voteBluff,
   };
 }

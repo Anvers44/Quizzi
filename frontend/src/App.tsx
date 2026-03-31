@@ -7,9 +7,13 @@ import JoinPage from "./pages/JoinPage";
 import PlayerScreen from "./pages/PlayerScreen";
 import SettingsPage from "./pages/SettingPage";
 import StatsPage from "./pages/StatsPage";
+import AuthPage from "./pages/AuthPage";
+import LeaderboardPage from "./pages/LeaderboardPage";
 import { loadSession, saveSession, clearSession } from "./lib/session";
+import { loadAuth, clearAuth } from "./lib/auth";
 import { apiGet } from "./lib/api";
 import type { GameConfig, Avatar } from "./types";
+import type { AuthUser } from "./lib/auth";
 
 type Screen =
   | "home"
@@ -19,7 +23,9 @@ type Screen =
   | "join"
   | "player"
   | "stats"
-  | "settings";
+  | "settings"
+  | "auth"
+  | "leaderboard";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
@@ -29,9 +35,13 @@ export default function App() {
   const [sessionToken, setSessionToken] = useState("");
   const [pseudo, setPseudo] = useState("");
   const [avatar, setAvatar] = useState<Avatar>("fox");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
-  // ── Restore session on mount ───────────────────────────────
+  // ── Init ──────────────────────────────────────────────────
   useEffect(() => {
+    const auth = loadAuth();
+    if (auth) setAuthUser(auth);
+
     const session = loadSession();
     if (!session) return;
 
@@ -52,8 +62,6 @@ export default function App() {
       setPseudo(session.pseudo ?? "");
       setAvatar((session.avatar as Avatar) ?? "fox");
       setScreen("player");
-      // specialtyTheme is already stored in localStorage via saveSession below
-      // PlayerScreen reads it directly from localStorage
     }
   }, []);
 
@@ -64,7 +72,6 @@ export default function App() {
     setScreen("host-lobby");
   }
 
-  // JoinPage appelle cette fonction avec specialtyTheme inclus
   function handlePlayerJoined(
     code: string,
     info: {
@@ -80,8 +87,6 @@ export default function App() {
     setSessionToken(info.sessionToken);
     setPseudo(info.pseudo);
     setAvatar(info.avatar);
-
-    // ← C'est ici qu'on sauvegarde tout, y compris specialtyTheme
     saveSession({
       roomCode: code,
       playerId: info.playerId,
@@ -91,8 +96,17 @@ export default function App() {
       avatar: info.avatar,
       specialtyTheme: info.specialtyTheme ?? null,
     });
-
     setScreen("player");
+  }
+
+  function handleAuth(user: AuthUser) {
+    setAuthUser(user);
+    setScreen("home");
+  }
+
+  function handleLogout() {
+    clearAuth();
+    setAuthUser(null);
   }
 
   function goHome() {
@@ -105,24 +119,26 @@ export default function App() {
   }
 
   // ── Render ─────────────────────────────────────────────────
-  if (screen === "stats") {
-    return <StatsPage onBack={() => setScreen("home")} />;
-  }
+  if (screen === "auth")
+    return <AuthPage onAuth={handleAuth} onBack={() => setScreen("home")} />;
 
-  if (screen === "settings") {
+  if (screen === "leaderboard")
+    return <LeaderboardPage onBack={() => setScreen("home")} />;
+
+  if (screen === "stats") return <StatsPage onBack={() => setScreen("home")} />;
+
+  if (screen === "settings")
     return <SettingsPage onBack={() => setScreen("home")} />;
-  }
 
-  if (screen === "host-create") {
+  if (screen === "host-create")
     return (
       <HostPage
         onBack={() => setScreen("home")}
         onRoomCreated={handleRoomCreated}
       />
     );
-  }
 
-  if (screen === "host-lobby" && gameConfig) {
+  if (screen === "host-lobby" && gameConfig)
     return (
       <HostLobby
         roomCode={roomCode}
@@ -131,24 +147,22 @@ export default function App() {
         onStart={() => setScreen("host-game")}
       />
     );
-  }
 
-  if (screen === "host-game" && gameConfig) {
+  if (screen === "host-game" && gameConfig)
     return (
       <HostGame roomCode={roomCode} config={gameConfig} onLeave={goHome} />
     );
-  }
 
-  if (screen === "join") {
+  if (screen === "join")
     return (
       <JoinPage
         onBack={() => setScreen("home")}
         onJoined={handlePlayerJoined}
+        authUser={authUser}
       />
     );
-  }
 
-  if (screen === "player") {
+  if (screen === "player")
     return (
       <PlayerScreen
         roomCode={roomCode}
@@ -160,15 +174,17 @@ export default function App() {
         onRoomClosed={goHome}
       />
     );
-  }
 
-  // Default: home
   return (
     <HomePage
       onHost={() => setScreen("host-create")}
       onJoin={() => setScreen("join")}
       onStats={() => setScreen("stats")}
       onSettings={() => setScreen("settings")}
+      onLeaderboard={() => setScreen("leaderboard")}
+      onAuth={() => setScreen("auth")}
+      authUser={authUser}
+      onLogout={handleLogout}
     />
   );
 }

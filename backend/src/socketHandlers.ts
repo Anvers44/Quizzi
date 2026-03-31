@@ -9,19 +9,24 @@ import type {
   PublicPlayer,
   QuestionPayload,
   RoundEndPayload,
+  BluffInputPayload,
 } from "./socket-events";
 import type {
   GameState,
   Player,
-  PowerType,
   AttackPower,
   DefensePower,
+  BluffOption,
 } from "./types";
+import { db } from "./db/client";
 
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type AppServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
-const ROUND_COUNTDOWN_MS = 3000; // 3s countdown only at round start
+const ROUND_COUNTDOWN_MS = 3_000;
+const BLUFF_INPUT_SECS = 45;
+const BLUFF_VOTE_SECS = 30;
+const BLUFF_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
 const socketMap = new Map<string, { roomCode: string; playerId: string }>();
 const revealTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -33,7 +38,7 @@ export function getIo() {
   return _io;
 }
 
-// ─── Public player ────────────────────────────────────────────
+// ─── Public helpers ───────────────────────────────────────────
 function toPublicPlayer(
   p: Player,
   eliminated: string[],
@@ -85,7 +90,7 @@ function getActivePlayers(state: GameState): Player[] {
   );
 }
 
-// ─── Empty room watcher ───────────────────────────────────────
+// ─── Timers ───────────────────────────────────────────────────
 function scheduleEmptyCheck(io: AppServer, roomCode: string) {
   const ex = emptyTimers.get(roomCode);
   if (ex) {
@@ -95,8 +100,7 @@ function scheduleEmptyCheck(io: AppServer, roomCode: string) {
   const t = setTimeout(async () => {
     emptyTimers.delete(roomCode);
     const s = await getRoom(roomCode);
-    if (!s) return;
-    if (s.status === "finished" || s.status === "lobby") return;
+    if (!s || s.status === "finished" || s.status === "lobby") return;
     if (Object.values(s.players).some((p) => p.connected)) return;
     [revealTimers, expiryTimers].forEach((m) => {
       const t = m.get(roomCode);
@@ -118,8 +122,6 @@ function cancelEmptyCheck(roomCode: string) {
     emptyTimers.delete(roomCode);
   }
 }
-
-// ─── Expiry ───────────────────────────────────────────────────
 function scheduleExpiry(io: AppServer, roomCode: string) {
   const ex = expiryTimers.get(roomCode);
   if (ex) clearTimeout(ex);
@@ -152,7 +154,7 @@ function isFirstQOfRound(state: GameState) {
   return state.currentQuestionIndex % state.config.questionsPerRound === 0;
 }
 
-// ─── Powers: assign 1 attack + 1 defense per player ──────────
+// ─── Powers ───────────────────────────────────────────────────
 function assignPowers(state: GameState): void {
   if (!state.config.powersEnabled) return;
   for (const p of getActivePlayers(state)) {
@@ -164,14 +166,12 @@ function assignPowers(state: GameState): void {
     p.defenseUsed = false;
   }
 }
-
 function applyDefense(power: DefensePower, p: Player) {
   if (power === "shield") p.shieldActive = true;
   if (power === "double") p.doubleNextAnswer = true;
   if (power === "mirror") p.mirrorActive = true;
   if (power === "ghost") p.ghostActive = true;
 }
-
 function queueAttack(
   power: AttackPower,
   target: Player,
@@ -189,7 +189,6 @@ function queueAttack(
     expiresAt: 0,
   });
 }
-
 function applyPendingEffects(state: GameState): void {
   const now = Date.now();
   for (const p of Object.values(state.players)) {
@@ -206,8 +205,6 @@ function applyPendingEffects(state: GameState): void {
     p.pendingEffects = [];
   }
 }
-
-// ─── Emit powers ─────────────────────────────────────────────
 async function emitPowers(io: AppServer, roomCode: string, state: GameState) {
   if (!state.config.powersEnabled) return;
   const sockets = await io.in(roomCode).fetchSockets();
@@ -219,12 +216,11 @@ async function emitPowers(io: AppServer, roomCode: string, state: GameState) {
     );
     if (!entry) continue;
     const s = sockets.find((sk) => sk.id === entry[0]);
-    if (s && p.attackPower && p.defensePower) {
+    if (s && p.attackPower && p.defensePower)
       s.emit("powers:assigned", {
         attackPower: p.attackPower,
         defensePower: p.defensePower,
       });
-    }
   }
 }
 
@@ -245,9 +241,10 @@ function computePerfectBonuses(state: GameState): Record<string, number> {
   return bonuses;
 }
 
-// ─── Start question ───────────────────────────────────────────
-// Countdown ONLY happens at the first question of each round.
-// We delay the actual question start by ROUND_COUNTDOWN_MS in that case.
+// ═══════════════════════════════════════════════════════════════
+// QUESTION FLOW
+// ═══════════════════════════════════════════════════════════════
+
 async function startQuestion(io: AppServer, roomCode: string) {
   const state = await getRoom(roomCode);
   if (!state) return;
@@ -257,10 +254,14 @@ async function startQuestion(io: AppServer, roomCode: string) {
     return;
   }
 
+  // Branch on question type
+  if (q.type === "open" && state.config.bluffEnabled) {
+    return startBluffInput(io, roomCode);
+  }
+
+  // ── Standard MCQ ──
   const isRoundStart = isFirstQOfRound(state);
   const delay = isRoundStart ? ROUND_COUNTDOWN_MS : 0;
-
-  // questionStartedAt = when the timer actually begins
   const questionStartAt = Date.now() + delay;
 
   state.status = "playing";
@@ -269,8 +270,6 @@ async function startQuestion(io: AppServer, roomCode: string) {
   state.timeElapsedBeforePause = 0;
   state.lastQuestionPoints = {};
   state.lastQuestionTimes = {};
-
-  // Apply pending effects from previous question
   applyPendingEffects(state);
 
   const now = Date.now();
@@ -292,18 +291,20 @@ async function startQuestion(io: AppServer, roomCode: string) {
     round: state.currentRound,
     totalRounds: state.config.rounds,
     imageUrl: q.imageUrl,
+    audioUrl: q.audioUrl,
+    videoUrl: q.videoUrl,
     difficulty: q.difficulty,
     theme: q.theme,
+    questionType: q.type ?? "mcq",
   };
   io.to(roomCode).emit("question:start", payload);
 
-  // Timer: delay (countdown) + timeLimit
   const totalMs = delay + q.timeLimit * 1000;
   const t = setTimeout(() => triggerReveal(io, roomCode), totalMs);
   revealTimers.set(roomCode, t);
 }
 
-// ─── Reveal ───────────────────────────────────────────────────
+// ─── MCQ reveal ───────────────────────────────────────────────
 export async function triggerReveal(io: AppServer, roomCode: string) {
   const rv = revealTimers.get(roomCode);
   if (rv) {
@@ -321,7 +322,6 @@ export async function triggerReveal(io: AppServer, roomCode: string) {
     const ci = p.answers?.[q.id];
     if (ci !== undefined) playerAnswers[p.id] = ci;
   }
-
   io.to(roomCode).emit("question:reveal", {
     questionId: q.id,
     correctIndex: q.correctIndex,
@@ -332,6 +332,178 @@ export async function triggerReveal(io: AppServer, roomCode: string) {
     timeTaken: state.lastQuestionTimes || {},
     questionTheme: q.theme,
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BLUFF FLOW
+// ═══════════════════════════════════════════════════════════════
+
+async function startBluffInput(io: AppServer, roomCode: string) {
+  const state = await getRoom(roomCode);
+  if (!state) return;
+  const q = state.questions[state.currentQuestionIndex];
+  if (!q) return;
+
+  const isRoundStart = isFirstQOfRound(state);
+  const delay = isRoundStart ? ROUND_COUNTDOWN_MS : 0;
+  const startedAt = Date.now() + delay;
+
+  state.status = "bluff_input";
+  state.bluffSubmissions = {};
+  state.bluffOptions = [];
+  state.bluffVotes = {};
+  state.bluffDeadline = startedAt + BLUFF_INPUT_SECS * 1000;
+  state.questionStartedAt = startedAt;
+  state.lastQuestionPoints = {};
+  state.lastQuestionTimes = {};
+  applyPendingEffects(state);
+  await saveRoom(state);
+
+  const payload: BluffInputPayload = {
+    id: q.id,
+    text: q.text,
+    theme: q.theme,
+    difficulty: q.difficulty,
+    timeLimit: BLUFF_INPUT_SECS,
+    startedAt,
+    isRoundStart,
+    round: state.currentRound,
+    totalRounds: state.config.rounds,
+    imageUrl: q.imageUrl,
+  };
+  io.to(roomCode).emit("bluff:input_start", payload);
+
+  const totalMs = delay + BLUFF_INPUT_SECS * 1000;
+  const t = setTimeout(() => startBluffVoting(io, roomCode), totalMs);
+  revealTimers.set(roomCode, t);
+}
+
+async function startBluffVoting(io: AppServer, roomCode: string) {
+  const rv = revealTimers.get(roomCode);
+  if (rv) {
+    clearTimeout(rv);
+    revealTimers.delete(roomCode);
+  }
+
+  const state = await getRoom(roomCode);
+  if (!state || state.status !== "bluff_input") return;
+  const q = state.questions[state.currentQuestionIndex];
+
+  // Build options: real answer + all fake submissions
+  const items: Array<{ text: string; isReal: boolean; authorId?: string }> = [
+    { text: q.correctAnswer ?? q.choices[q.correctIndex] ?? "?", isReal: true },
+  ];
+
+  for (const [pid, text] of Object.entries(state.bluffSubmissions ?? {})) {
+    if (text.trim().length > 0) {
+      items.push({ text: text.trim(), isReal: false, authorId: pid });
+    }
+  }
+
+  // Shuffle
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+
+  const options: BluffOption[] = items
+    .slice(0, BLUFF_LETTERS.length)
+    .map((item, idx) => ({
+      letter: BLUFF_LETTERS[idx],
+      ...item,
+    }));
+
+  const startedAt = Date.now();
+  state.status = "bluff_voting";
+  state.bluffOptions = options;
+  state.bluffVotes = {};
+  state.bluffDeadline = startedAt + BLUFF_VOTE_SECS * 1000;
+  await saveRoom(state);
+
+  // Send options WITHOUT revealing isReal / authorId
+  io.to(roomCode).emit("bluff:vote_start", {
+    options: options.map(({ letter, text }) => ({ letter, text })),
+    timeLimit: BLUFF_VOTE_SECS,
+    startedAt,
+    question: q.text,
+  });
+
+  const t = setTimeout(() => revealBluff(io, roomCode), BLUFF_VOTE_SECS * 1000);
+  revealTimers.set(roomCode, t);
+}
+
+async function revealBluff(io: AppServer, roomCode: string) {
+  const rv = revealTimers.get(roomCode);
+  if (rv) {
+    clearTimeout(rv);
+    revealTimers.delete(roomCode);
+  }
+
+  const state = await getRoom(roomCode);
+  if (!state || state.status !== "bluff_voting") return;
+  const q = state.questions[state.currentQuestionIndex];
+  const opts = state.bluffOptions ?? [];
+  const votes = state.bluffVotes ?? {};
+
+  // ── Scoring ──
+  const pointsEarned: Record<string, number> = {};
+  for (const [voterId, letter] of Object.entries(votes)) {
+    const opt = opts.find((o) => o.letter === letter);
+    if (!opt) continue;
+    if (opt.isReal) {
+      pointsEarned[voterId] = (pointsEarned[voterId] ?? 0) + 800;
+    } else if (opt.authorId) {
+      pointsEarned[opt.authorId] = (pointsEarned[opt.authorId] ?? 0) + 300;
+    }
+  }
+
+  for (const [pid, pts] of Object.entries(pointsEarned)) {
+    const p = state.players[pid];
+    if (!p) continue;
+    p.score = Math.max(0, p.score + pts);
+    if (p.roundCorrectCount !== undefined) p.roundCorrectCount++;
+    if (!p.answeredQuestions.includes(q.id)) p.answeredQuestions.push(q.id);
+    if (state.config.mode === "teams" && p.teamId && state.teams[p.teamId])
+      state.teams[p.teamId].score += pts;
+  }
+
+  state.status = "revealing";
+  state.lastQuestionPoints = pointsEarned;
+  await saveRoom(state);
+
+  const authorPseudos: Record<string, string> = {};
+  for (const [id, p] of Object.entries(state.players))
+    authorPseudos[id] = p.pseudo;
+
+  io.to(roomCode).emit("bluff:reveal", {
+    questionId: q.id,
+    question: q.text,
+    correctAnswer: q.correctAnswer ?? "",
+    options: opts,
+    votes,
+    pointsEarned,
+    scores: toPublicPlayers(state),
+    teams: state.teams,
+    authorPseudos,
+  });
+}
+
+export async function checkAllBluffSubmitted(io: AppServer, roomCode: string) {
+  const state = await getRoom(roomCode);
+  if (!state || state.status !== "bluff_input") return;
+  const active = getActivePlayers(state);
+  if (!active.length) return;
+  const submittedCount = Object.keys(state.bluffSubmissions ?? {}).length;
+  if (submittedCount >= active.length) await startBluffVoting(io, roomCode);
+}
+
+export async function checkAllBluffVoted(io: AppServer, roomCode: string) {
+  const state = await getRoom(roomCode);
+  if (!state || state.status !== "bluff_voting") return;
+  const active = getActivePlayers(state);
+  if (!active.length) return;
+  const votedCount = Object.keys(state.bluffVotes ?? {}).length;
+  if (votedCount >= active.length) await revealBluff(io, roomCode);
 }
 
 // ─── Round end ────────────────────────────────────────────────
@@ -363,12 +535,13 @@ async function endRound(io: AppServer, roomCode: string) {
   });
 }
 
-// ─── Finish ───────────────────────────────────────────────────
+// ─── Finish + DB persist ──────────────────────────────────────
 async function finishGame(io: AppServer, roomCode: string) {
   const state = await getRoom(roomCode);
   if (!state) return;
   state.status = "finished";
   await saveRoom(state);
+
   const scores = toPublicPlayers(state);
   const active = scores
     .filter((p) => !p.isEliminated)
@@ -385,9 +558,47 @@ async function finishGame(io: AppServer, roomCode: string) {
     winnerId,
     winnerTeamId,
   });
+
+  // ── Persist to DB for logged-in users ──
+  try {
+    const loggedIn = Object.values(state.players).filter((p) => p.userId);
+    if (!loggedIn.length) return;
+
+    const gr = await db.query(
+      "INSERT INTO game_results (room_code, mode, player_count) VALUES ($1,$2,$3) RETURNING id",
+      [roomCode, state.config.mode, Object.keys(state.players).length],
+    );
+    const gameId = gr.rows[0].id;
+
+    for (const p of loggedIn) {
+      const rank = active.findIndex((s) => s.id === p.id) + 1;
+      const isWinner =
+        state.config.mode === "teams"
+          ? winnerTeamId
+            ? p.teamId === winnerTeamId
+            : false
+          : rank === 1;
+      await db.query(
+        `INSERT INTO player_game_stats (user_id,game_id,pseudo,score,rank,is_winner,team_id,mode)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [
+          p.userId,
+          gameId,
+          p.pseudo,
+          p.score,
+          rank || 999,
+          isWinner,
+          p.teamId ?? null,
+          state.config.mode,
+        ],
+      );
+    }
+  } catch (e: any) {
+    console.error("[db] finishGame persist:", e.message);
+  }
 }
 
-// ─── Check all answered ───────────────────────────────────────
+// ─── Check all MCQ answered ───────────────────────────────────
 export async function checkAllAnswered(
   io: AppServer,
   roomCode: string,
@@ -396,16 +607,18 @@ export async function checkAllAnswered(
   const state = await getRoom(roomCode);
   if (!state || state.status !== "playing") return;
   const active = getActivePlayers(state);
-  if (active.length === 0) return;
+  if (!active.length) return;
   if (active.every((p) => p.answeredQuestions.includes(questionId)))
     await triggerReveal(io, roomCode);
 }
 
-// ─── Register ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// REGISTER
+// ═══════════════════════════════════════════════════════════════
 export function registerSocketHandlers(io: AppServer) {
   _io = io;
+
   io.on("connection", (socket: AppSocket) => {
-    // Helper to build question payload for reconnect
     function makeQPayload(state: GameState): QuestionPayload | null {
       if (!state.questionStartedAt) return null;
       const q = state.questions[state.currentQuestionIndex];
@@ -418,15 +631,19 @@ export function registerSocketHandlers(io: AppServer) {
         index: state.currentQuestionIndex,
         total: state.questions.length,
         startedAt: state.questionStartedAt,
-        isRoundStart: false, // reconnect: no countdown
+        isRoundStart: false,
         round: state.currentRound,
         totalRounds: state.config.rounds,
         imageUrl: q.imageUrl,
+        audioUrl: q.audioUrl,
+        videoUrl: q.videoUrl,
         difficulty: q.difficulty,
         theme: q.theme,
+        questionType: q.type ?? "mcq",
       };
     }
 
+    // ── Host join ─────────────────────────────────────────────
     socket.on("host:join", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
@@ -443,8 +660,38 @@ export function registerSocketHandlers(io: AppServer) {
         const qp = makeQPayload(state);
         if (qp) socket.emit("question:start", qp);
       }
+      if (state.status === "bluff_input" || state.status === "bluff_voting") {
+        const q = state.questions[state.currentQuestionIndex];
+        if (state.status === "bluff_input" && q) {
+          socket.emit("bluff:input_start", {
+            id: q.id,
+            text: q.text,
+            theme: q.theme,
+            difficulty: q.difficulty,
+            timeLimit: BLUFF_INPUT_SECS,
+            startedAt: state.questionStartedAt ?? Date.now(),
+            isRoundStart: false,
+            round: state.currentRound,
+            totalRounds: state.config.rounds,
+            imageUrl: q.imageUrl,
+          });
+        }
+        if (state.status === "bluff_voting" && state.bluffOptions) {
+          socket.emit("bluff:vote_start", {
+            options: state.bluffOptions.map(({ letter, text }) => ({
+              letter,
+              text,
+              question: q.text,
+            })),
+            timeLimit: BLUFF_VOTE_SECS,
+            startedAt:
+              (state.bluffDeadline ?? Date.now()) - BLUFF_VOTE_SECS * 1000,
+          });
+        }
+      }
     });
 
+    // ── Player join ───────────────────────────────────────────
     socket.on("player:join", async ({ roomCode, playerId, sessionToken }) => {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
@@ -464,7 +711,6 @@ export function registerSocketHandlers(io: AppServer) {
       if (!player.pendingEffects) player.pendingEffects = [];
       if (typeof player.roundCorrectCount !== "number")
         player.roundCorrectCount = 0;
-      // Migrate old power fields
       if (!("attackPower" in player)) {
         (player as any).attackPower = null;
         (player as any).defensePower = null;
@@ -475,7 +721,6 @@ export function registerSocketHandlers(io: AppServer) {
       socketMap.set(socket.id, { roomCode: code, playerId });
       socket.join(code);
       socket.emit("room:state", toRoomState(state));
-      // Send current powers
       if (player.attackPower && player.defensePower)
         socket.emit("powers:assigned", {
           attackPower: player.attackPower,
@@ -488,31 +733,101 @@ export function registerSocketHandlers(io: AppServer) {
           "player:joined",
           toPublicPlayer(player, state.eliminatedPlayerIds),
         );
+
       if (state.status === "playing" || state.status === "paused") {
         const qp = makeQPayload(state);
         if (qp) socket.emit("question:start", qp);
         if (state.status === "paused") {
           const q = state.questions[state.currentQuestionIndex];
-          const timeLeft = Math.max(
-            0,
-            q.timeLimit - state.timeElapsedBeforePause,
-          );
-          socket.emit("game:paused", { timeLeft: Math.ceil(timeLeft) });
+          socket.emit("game:paused", {
+            timeLeft: Math.ceil(
+              Math.max(0, q.timeLimit - state.timeElapsedBeforePause),
+            ),
+          });
         }
+      }
+      if (state.status === "bluff_input" && state.questionStartedAt) {
+        const q = state.questions[state.currentQuestionIndex];
+        socket.emit("bluff:input_start", {
+          id: q.id,
+          text: q.text,
+          theme: q.theme,
+          difficulty: q.difficulty,
+          timeLimit: BLUFF_INPUT_SECS,
+          startedAt: state.questionStartedAt,
+          isRoundStart: false,
+          round: state.currentRound,
+          totalRounds: state.config.rounds,
+          imageUrl: q.imageUrl,
+        });
+      }
+      if (state.status === "bluff_voting" && state.bluffOptions) {
+        socket.emit("bluff:vote_start", {
+          options: state.bluffOptions.map(({ letter, text }) => ({
+            letter,
+            text,
+            question: q.text,
+          })),
+          timeLimit: BLUFF_VOTE_SECS,
+          startedAt:
+            (state.bluffDeadline ?? Date.now()) - BLUFF_VOTE_SECS * 1000,
+        });
       }
     });
 
-    socket.on("host:assign_teams", async ({ roomCode, assignments }) => {
-      const code = roomCode.toUpperCase();
-      const state = await getRoom(code);
-      if (!state) return;
-      for (const [pid, tid] of Object.entries(assignments))
-        if (state.players[pid]) state.players[pid].teamId = tid;
-      Object.values(state.teams).forEach((t) => (t.score = 0));
-      await saveRoom(state);
-      io.to(code).emit("room:state", toRoomState(state));
-    });
+    // ── Bluff submit ──────────────────────────────────────────
+    socket.on(
+      "player:bluff_submit",
+      async ({ roomCode, playerId, sessionToken, text }) => {
+        const code = roomCode.toUpperCase();
+        const state = await getRoom(code);
+        if (!state || state.status !== "bluff_input") return;
+        const p = state.players[playerId];
+        if (!p || p.sessionToken !== sessionToken) return;
+        if (state.eliminatedPlayerIds.includes(playerId)) return;
 
+        const cleaned = text.trim().slice(0, 100);
+        if (!cleaned) return;
+        if (!state.bluffSubmissions) state.bluffSubmissions = {};
+        state.bluffSubmissions[playerId] = cleaned;
+        await saveRoom(state);
+
+        const active = getActivePlayers(state).length;
+        const count = Object.keys(state.bluffSubmissions).length;
+        io.to(code).emit("bluff:submitted", { playerId, count, total: active });
+
+        await checkAllBluffSubmitted(io, code);
+      },
+    );
+
+    // ── Bluff vote ────────────────────────────────────────────
+    socket.on(
+      "player:bluff_vote",
+      async ({ roomCode, playerId, sessionToken, letter }) => {
+        const code = roomCode.toUpperCase();
+        const state = await getRoom(code);
+        if (!state || state.status !== "bluff_voting") return;
+        const p = state.players[playerId];
+        if (!p || p.sessionToken !== sessionToken) return;
+        if (state.eliminatedPlayerIds.includes(playerId)) return;
+        if (!state.bluffVotes) state.bluffVotes = {};
+        if (state.bluffVotes[playerId]) return; // already voted
+
+        // Can't vote for your own submission
+        const myOpt = (state.bluffOptions ?? []).find(
+          (o) => o.authorId === playerId,
+        );
+        if (myOpt?.letter === letter) return;
+
+        state.bluffVotes[playerId] = letter;
+        await saveRoom(state);
+        io.to(code).emit("bluff:voted", { playerId });
+
+        await checkAllBluffVoted(io, code);
+      },
+    );
+
+    // ── Host: start ───────────────────────────────────────────
     socket.on("host:start", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
@@ -530,10 +845,20 @@ export function registerSocketHandlers(io: AppServer) {
       await startQuestion(io, code);
     });
 
+    // ── Host: next ────────────────────────────────────────────
     socket.on("host:next", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
       if (!state) return;
+
+      if (state.status === "bluff_input") {
+        await startBluffVoting(io, code);
+        return;
+      }
+      if (state.status === "bluff_voting") {
+        await revealBluff(io, code);
+        return;
+      }
       if (state.status === "playing" || state.status === "paused") {
         await triggerReveal(io, code);
         return;
@@ -562,31 +887,36 @@ export function registerSocketHandlers(io: AppServer) {
       }
     });
 
-    // ── Attack power ───────────────────────────────────────────
+    // ── Attack / Defense powers ───────────────────────────────
     socket.on(
       "player:use_attack",
       async ({ roomCode, playerId, sessionToken, targetPlayerId }) => {
         const code = roomCode.toUpperCase();
         const state = await getRoom(code);
-        if (!state || state.status !== "revealing") return; // only between questions
-
+        console.log(
+          "[use_attack] status=",
+          state?.status,
+          "attacker=",
+          playerId,
+          "target=",
+          targetPlayerId,
+        );
+        if (!state || state.status !== "revealing") {
+          console.log("[use_attack] BLOQUÉ — mauvais status");
+          return;
+        }
         const attacker = state.players[playerId];
         if (!attacker || attacker.sessionToken !== sessionToken) return;
         if (!attacker.attackPower || attacker.attackUsed) return;
         if (state.eliminatedPlayerIds.includes(playerId)) return;
-
         const target = state.players[targetPlayerId];
         if (!target || state.eliminatedPlayerIds.includes(targetPlayerId))
           return;
-
         const power = attacker.attackPower;
-
-        // Ghost: untargetable
         if (target.ghostActive) {
           socket.emit("power:blocked", { byShield: false, mirrorSent: false });
           return;
         }
-        // Shield / Mirror
         if (target.shieldActive) {
           const mirrored = target.mirrorActive;
           target.shieldActive = false;
@@ -601,7 +931,6 @@ export function registerSocketHandlers(io: AppServer) {
               attacker.avatar,
               attacker.pseudo,
             );
-            // Notify the room
             io.to(code).emit("power:effect", {
               type: power,
               fromPlayerId: target.id,
@@ -619,14 +948,10 @@ export function registerSocketHandlers(io: AppServer) {
           });
           return;
         }
-
-        // Apply attack (queued for next question)
         queueAttack(power, target, playerId, attacker.avatar, attacker.pseudo);
         attacker.attackPower = null;
         attacker.attackUsed = true;
         await saveRoom(state);
-
-        // Broadcast to ALL so players see the notification with attacker avatar
         io.to(code).emit("power:effect", {
           type: power,
           fromPlayerId: playerId,
@@ -640,19 +965,16 @@ export function registerSocketHandlers(io: AppServer) {
       },
     );
 
-    // ── Defense power ──────────────────────────────────────────
     socket.on(
       "player:use_defense",
       async ({ roomCode, playerId, sessionToken }) => {
         const code = roomCode.toUpperCase();
         const state = await getRoom(code);
         if (!state || state.status !== "revealing") return;
-
         const player = state.players[playerId];
         if (!player || player.sessionToken !== sessionToken) return;
         if (!player.defensePower || player.defenseUsed) return;
         if (state.eliminatedPlayerIds.includes(playerId)) return;
-
         applyDefense(player.defensePower, player);
         player.defensePower = null;
         player.defenseUsed = true;
@@ -661,17 +983,16 @@ export function registerSocketHandlers(io: AppServer) {
       },
     );
 
+    // ── Pause / Resume / Stop ─────────────────────────────────
     socket.on("host:pause", async ({ roomCode }) => {
       const code = roomCode.toUpperCase();
       const state = await getRoom(code);
       if (!state || state.status !== "playing") return;
       const now = Date.now();
-      // Elapsed since question actually started (questionStartedAt already includes countdown delay)
       const elapsed = state.questionStartedAt
         ? Math.max(0, (now - state.questionStartedAt) / 1000)
         : 0;
       const q = state.questions[state.currentQuestionIndex];
-      const timeLeft = Math.max(0, q.timeLimit - elapsed);
       const t = revealTimers.get(code);
       if (t) {
         clearTimeout(t);
@@ -681,7 +1002,9 @@ export function registerSocketHandlers(io: AppServer) {
       state.pausedAt = now;
       state.timeElapsedBeforePause = elapsed;
       await saveRoom(state);
-      io.to(code).emit("game:paused", { timeLeft: Math.ceil(timeLeft) });
+      io.to(code).emit("game:paused", {
+        timeLeft: Math.ceil(Math.max(0, q.timeLimit - elapsed)),
+      });
     });
 
     socket.on("host:resume", async ({ roomCode }) => {
@@ -690,7 +1013,6 @@ export function registerSocketHandlers(io: AppServer) {
       if (!state || state.status !== "paused") return;
       const q = state.questions[state.currentQuestionIndex];
       const timeLeft = Math.max(0, q.timeLimit - state.timeElapsedBeforePause);
-      // New questionStartedAt: as if question started (timeElapsedBeforePause) seconds ago
       const newStartedAt = Date.now() - state.timeElapsedBeforePause * 1000;
       state.status = "playing";
       state.questionStartedAt = newStartedAt;
@@ -708,6 +1030,17 @@ export function registerSocketHandlers(io: AppServer) {
         revealTimers.delete(roomCode);
       }
       await finishGame(io, roomCode.toUpperCase());
+    });
+
+    socket.on("host:assign_teams", async ({ roomCode, assignments }) => {
+      const code = roomCode.toUpperCase();
+      const state = await getRoom(code);
+      if (!state) return;
+      for (const [pid, tid] of Object.entries(assignments))
+        if (state.players[pid]) state.players[pid].teamId = tid;
+      Object.values(state.teams).forEach((t) => (t.score = 0));
+      await saveRoom(state);
+      io.to(code).emit("room:state", toRoomState(state));
     });
 
     socket.on("host:leave", async ({ roomCode }) => {

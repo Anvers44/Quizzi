@@ -45,6 +45,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
   const [rounds, setRounds] = useState(3);
   const [qpr, setQpr] = useState(5);
   const [powers, setPowers] = useState(false);
+  const [bluff, setBluff] = useState(false);
   const [teamCount, setTeamCount] = useState(2);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -76,6 +77,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
         questionsPerRound: qpr,
         powersEnabled: powers,
         teamCount: mode === "teams" ? teamCount : 2,
+        bluffEnabled: bluff,
       };
       const { roomCode } = await apiPost<{ roomCode: string }>(
         "/api/rooms",
@@ -127,11 +129,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
         <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
           <button
             onClick={() => toggleTheme("all")}
-            className={`flex flex-col items-center gap-1 px-2 py-3 rounded-2xl text-xs font-semibold transition col-span-2 sm:col-span-1 ${
-              selectedThemes.includes("all")
-                ? "bg-yellow-400 text-indigo-900"
-                : "bg-indigo-700 text-white"
-            }`}
+            className={`flex flex-col items-center gap-1 px-2 py-3 rounded-2xl text-xs font-semibold transition col-span-2 sm:col-span-1 ${selectedThemes.includes("all") ? "bg-yellow-400 text-indigo-900" : "bg-indigo-700 text-white"}`}
           >
             <span className="text-2xl">🎲</span>
             <span>Tous</span>
@@ -144,11 +142,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
               <button
                 key={key}
                 onClick={() => toggleTheme(key)}
-                className={`flex flex-col items-center gap-1 px-2 py-3 rounded-2xl text-xs font-semibold transition relative ${
-                  isSel
-                    ? "bg-yellow-400 text-indigo-900"
-                    : "bg-indigo-700 text-white hover:bg-indigo-600"
-                }`}
+                className={`flex flex-col items-center gap-1 px-2 py-3 rounded-2xl text-xs font-semibold transition relative ${isSel ? "bg-yellow-400 text-indigo-900" : "bg-indigo-700 text-white hover:bg-indigo-600"}`}
               >
                 {isSel && (
                   <span className="absolute top-1 right-1 text-xs">✓</span>
@@ -196,11 +190,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
             <button
               key={key}
               onClick={() => setMode(key)}
-              className={`flex flex-col items-start gap-1 px-4 py-4 rounded-2xl transition text-left ${
-                mode === key
-                  ? "bg-yellow-400 text-indigo-900"
-                  : "bg-indigo-700 text-white hover:bg-indigo-600"
-              }`}
+              className={`flex flex-col items-start gap-1 px-4 py-4 rounded-2xl transition text-left ${mode === key ? "bg-yellow-400 text-indigo-900" : "bg-indigo-700 text-white hover:bg-indigo-600"}`}
             >
               <span className="text-2xl">{info.emoji}</span>
               <span className="font-bold">{info.label}</span>
@@ -252,7 +242,6 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
             </div>
           )}
 
-          {/* Teams count — only for teams mode */}
           {mode === "teams" && (
             <div className="flex flex-col gap-2">
               <label className="text-indigo-300 text-sm font-semibold">
@@ -269,7 +258,6 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
                   </button>
                 ))}
               </div>
-              {/* Preview teams */}
               <div className="flex flex-wrap gap-2 mt-1">
                 {teamIds.map((id) => (
                   <span
@@ -283,13 +271,7 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
             </div>
           )}
 
-          {mode === "tournament" && (
-            <div className="bg-indigo-700/50 rounded-xl px-3 py-2 text-indigo-300 text-sm">
-              🏆 1 joueur éliminé par manche jusqu'au dernier survivant
-            </div>
-          )}
-
-          {/* Pouvoirs */}
+          {/* ⚡ Pouvoirs */}
           <div className="flex items-center justify-between">
             <div>
               <p className="text-white font-semibold">⚡ Pouvoirs</p>
@@ -306,6 +288,45 @@ export default function HostPage({ onRoomCreated, onBack }: Props) {
               />
             </button>
           </div>
+
+          {/* 🎭 Bluff */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-white font-semibold">🎭 Mode Bluff</p>
+              <p className="text-indigo-400 text-xs">
+                1 question bluff insérée toutes les 4 questions
+              </p>
+            </div>
+            <button
+              onClick={() => setBluff(!bluff)}
+              className={`w-14 h-7 rounded-full transition-all relative ${bluff ? "bg-yellow-400" : "bg-indigo-600"}`}
+            >
+              <span
+                className={`absolute top-0.5 w-6 h-6 bg-white rounded-full shadow transition-all ${bluff ? "left-7" : "left-0.5"}`}
+              />
+            </button>
+          </div>
+
+          {bluff && (
+            <div className="bg-indigo-700/50 rounded-xl px-4 py-3 text-xs text-indigo-300 flex flex-col gap-1">
+              <p>
+                <strong className="text-white">Comment ça marche :</strong>
+              </p>
+              <p>• Chaque joueur inventé une fausse réponse (45s)</p>
+              <p>
+                • Tout le monde vote pour la vraie réponse parmi toutes les
+                propositions
+              </p>
+              <p>
+                • Trouver la vraie →{" "}
+                <strong className="text-green-300">+800 pts</strong>
+              </p>
+              <p>
+                • Quelqu'un vote pour ta fausse →{" "}
+                <strong className="text-purple-300">+300 pts</strong>
+              </p>
+            </div>
+          )}
         </div>
       </section>
 

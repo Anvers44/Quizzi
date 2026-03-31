@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getRoom, saveRoom } from "../redis/helpers";
 import type { Player } from "../types";
 import { ALL_TEAM_IDS, AVATARS, ATTACK_POWERS, DEFENSE_POWERS } from "../types";
+import { extractUserId } from "./auth";
 
 export const playerRouter = Router();
 
@@ -26,14 +27,12 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
   if (state.status !== "lobby")
     return res.status(400).json({ error: "La partie a déjà commencé" });
 
-  // Check pseudo uniqueness
   const pseudoTaken = Object.values(state.players).some(
     (p) => p.pseudo.toLowerCase() === pseudo.trim().toLowerCase(),
   );
   if (pseudoTaken)
     return res.status(400).json({ error: "Ce pseudo est déjà pris" });
 
-  // Check avatar uniqueness
   const avatarTaken = Object.values(state.players).some(
     (p) => p.avatar === avatar,
   );
@@ -43,7 +42,9 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
   const playerId = uuidv4();
   const sessionToken = uuidv4();
 
-  // Auto-assign team
+  // Optional: link to user account via Bearer token
+  const userId = extractUserId(req.headers.authorization);
+
   let teamId: string | undefined;
   if (state.config.mode === "teams") {
     const teamIds = ALL_TEAM_IDS.slice(0, state.config.teamCount || 2);
@@ -68,7 +69,7 @@ playerRouter.post("/:roomCode/join", async (req, res) => {
     answerTimes: {},
     teamId,
     specialtyTheme: specialtyTheme || null,
-    // Powers assigned at round start, not here
+    userId: userId ?? null, // ← link to account
     attackPower: null,
     defensePower: null,
     attackUsed: false,
@@ -100,7 +101,6 @@ playerRouter.post("/:roomCode/rejoin", async (req, res) => {
 
   const state = await getRoom(roomCode);
   if (!state) return res.status(404).json({ error: "Room introuvable" });
-
   const player = state.players[playerId];
   if (!player) return res.status(404).json({ error: "Joueur introuvable" });
   if (player.sessionToken !== sessionToken)

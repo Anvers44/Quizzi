@@ -6,6 +6,11 @@ import { AVATAR_EMOJI, TEAM_META, ALL_TEAM_IDS } from "../types";
 import type { GameConfig } from "../types";
 import type { PublicPlayer, TeamPublic } from "../socket-events";
 import Scoreboard from "../components/Scoreboard";
+import {
+  HostBluffInputView,
+  HostBluffVoteView,
+  BluffRevealScreen,
+} from "../components/BluffScreens";
 
 interface Props {
   roomCode: string;
@@ -22,7 +27,6 @@ const COLORS_DIM = [
   "bg-green-500/20",
 ];
 
-// ─── Team bar ─────────────────────────────────────────────────
 function TeamBar({
   teams,
   config,
@@ -60,10 +64,9 @@ function TeamBar({
   );
 }
 
-// ─── Countdown overlay ────────────────────────────────────────
 function CountdownOverlay({ n }: { n: number }) {
   return (
-    <div className="absolute inset-0 bg-indigo-900/90 z-50 flex flex-col items-center justify-center animate-fadeIn pointer-events-none">
+    <div className="absolute inset-0 bg-indigo-900/90 z-50 flex flex-col items-center justify-center pointer-events-none animate-fadeIn">
       <p className="text-indigo-300 text-sm uppercase tracking-widest mb-4">
         La question commence dans
       </p>
@@ -77,7 +80,6 @@ function CountdownOverlay({ n }: { n: number }) {
   );
 }
 
-// ─── Question screen (no choice avatars during question) ──────
 function HostQuestion({
   question,
   players,
@@ -101,7 +103,6 @@ function HostQuestion({
   const pct = Math.max(0, (display / question.timeLimit) * 100);
   const timerColor =
     pct > 50 ? "bg-green-400" : pct > 20 ? "bg-yellow-400" : "bg-red-500";
-
   const answered = Object.keys(liveAnswers).length;
   const connected = players.filter(
     (p: any) => p.connected && !p.isEliminated,
@@ -110,8 +111,6 @@ function HostQuestion({
   return (
     <div className="relative h-[100dvh] bg-indigo-900 flex flex-col gap-3 p-4 overflow-hidden">
       {countdown > 0 && <CountdownOverlay n={countdown} />}
-
-      {/* Header */}
       <div className="flex justify-between items-center">
         <span className="text-indigo-300 text-sm font-semibold">
           M{question.round}/{question.totalRounds} · Q
@@ -128,17 +127,13 @@ function HostQuestion({
           {answered}/{connected} ✓
         </span>
       </div>
-
       <div className="w-full bg-indigo-800 rounded-full h-3 overflow-hidden">
         <div
           className={`${timerColor} h-3 rounded-full transition-all duration-300`}
           style={{ width: `${pct}%` }}
         />
       </div>
-
       {config.mode === "teams" && <TeamBar teams={teams} config={config} />}
-
-      {/* Question */}
       <div className="flex-1 flex flex-col items-center justify-center gap-3">
         {question.imageUrl && (
           <img
@@ -151,32 +146,18 @@ function HostQuestion({
           {question.text}
         </p>
       </div>
-
-      {/* Answers - only count, no avatars (so nobody sees who picked what) */}
       <div className="grid grid-cols-2 gap-2 max-w-4xl mx-auto w-full">
         {question.choices.map((choice: string, i: number) => (
-          <div
-            key={i}
-            className={`${COLORS[i]} rounded-2xl px-4 py-4 flex flex-col gap-1`}
-          >
+          <div key={i} className={`${COLORS[i]} rounded-2xl px-4 py-4`}>
             <div className="flex items-center gap-2">
               <span className="text-white font-bold text-lg">{SHAPES[i]}</span>
               <span className="text-white text-sm font-semibold flex-1">
                 {choice}
               </span>
             </div>
-            {/* Only show count of players who answered, not which one */}
-            <p className="text-white/70 text-xs">
-              {players.filter(
-                (p: any) => p.hasAnswered && p.connected && !p.isEliminated,
-              ).length > 0
-                ? ""
-                : ""}
-            </p>
           </div>
         ))}
       </div>
-
       <div className="flex gap-2 justify-center flex-wrap">
         {paused ? (
           <button
@@ -210,7 +191,6 @@ function HostQuestion({
   );
 }
 
-// ─── Reveal screen (score + time per player) ──────────────────
 function HostReveal({
   question,
   reveal,
@@ -235,14 +215,10 @@ function HostReveal({
         </span>
         <span className="text-green-300 text-sm font-bold">✅ Révélée</span>
       </div>
-
       {config.mode === "teams" && <TeamBar teams={teams} config={config} />}
-
       <p className="text-white text-lg font-bold text-center px-4">
         {question.text}
       </p>
-
-      {/* Answer choices */}
       <div className="grid grid-cols-2 gap-2 max-w-4xl mx-auto w-full">
         {question.choices.map((choice: string, i: number) => {
           const isCorrect = i === reveal.correctIndex;
@@ -291,25 +267,9 @@ function HostReveal({
           );
         })}
       </div>
-
-      {/* Players who didn't answer */}
-      {(() => {
-        const noAnswer = reveal.scores.filter(
-          (p: any) =>
-            !p.isEliminated && reveal.playerAnswers?.[p.id] === undefined,
-        );
-        if (!noAnswer.length) return null;
-        return (
-          <div className="text-center text-indigo-400 text-xs">
-            N'ont pas répondu : {noAnswer.map((p: any) => p.pseudo).join(", ")}
-          </div>
-        );
-      })()}
-
       <div className="max-w-md mx-auto w-full">
         <Scoreboard players={sorted} />
       </div>
-
       <div className="flex gap-2 justify-center flex-wrap pb-2">
         <button
           onClick={onNext}
@@ -332,7 +292,6 @@ function HostReveal({
   );
 }
 
-// ─── Round end (perfect bonus displayed) ─────────────────────
 function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
   const teamIds = ALL_TEAM_IDS.slice(0, config.teamCount || 2);
   const perfects = Object.entries(roundEnd.perfectBonuses || {}).filter(
@@ -344,7 +303,6 @@ function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
         📊 Fin de la manche {roundEnd.round}
         {roundEnd.totalRounds > 1 ? `/${roundEnd.totalRounds}` : ""}
       </h2>
-
       {roundEnd.eliminatedPseudo && (
         <div className="bg-red-500/20 border border-red-400 rounded-2xl px-6 py-3 text-center animate-scaleIn">
           <p className="text-red-300 text-sm">Éliminé</p>
@@ -353,7 +311,6 @@ function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
           </p>
         </div>
       )}
-
       {perfects.length > 0 && (
         <div className="bg-yellow-400/20 border border-yellow-400 rounded-2xl px-5 py-3 text-center animate-popIn">
           <p className="text-yellow-300 text-sm font-bold">
@@ -370,7 +327,6 @@ function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
           </p>
         </div>
       )}
-
       {config.mode === "teams" && (
         <div className="w-full max-w-sm flex flex-col gap-2">
           {teamIds
@@ -391,13 +347,11 @@ function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
             ))}
         </div>
       )}
-
       <div className="w-full max-w-md">
         <Scoreboard
           players={roundEnd.scores.filter((p: any) => !p.isEliminated)}
         />
       </div>
-
       <button
         onClick={onNext}
         className="bg-yellow-400 text-indigo-900 font-bold text-xl px-12 py-4 rounded-2xl shadow-lg active:scale-95 transition-all"
@@ -408,7 +362,6 @@ function HostRoundEnd({ roundEnd, teams, config, onNext, isLastRound }: any) {
   );
 }
 
-// ─── Finished ─────────────────────────────────────────────────
 function HostFinished({ finished, teams, config, onLeave }: any) {
   const teamIds = ALL_TEAM_IDS.slice(0, config.teamCount || 2);
   const isTeams = config.mode === "teams";
@@ -493,6 +446,12 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
     liveAnswers,
     countdown,
     teams,
+    bluffInput,
+    bluffVote,
+    bluffReveal,
+    bluffSubmitCount,
+    bluffSubmitTotal,
+    bluffVotedCount,
     leave,
     nextQuestion,
     pauseGame,
@@ -539,6 +498,58 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
         }
       />
     );
+
+  // ── Bluff phases ──
+  if (bluffReveal)
+    return (
+      <div className="h-[100dvh] bg-indigo-900 flex flex-col">
+        <div className="flex-1 overflow-y-auto">
+          <BluffRevealScreen
+            payload={bluffReveal}
+            playerId=""
+            pseudo="Hôte"
+            avatar="fox"
+          />
+        </div>
+        <div className="p-4 flex justify-center">
+          <button
+            onClick={nextQuestion}
+            className="bg-yellow-400 text-indigo-900 font-bold px-8 py-3 rounded-xl"
+          >
+            {isLastOfRound
+              ? isLastRound
+                ? "🏁 Résultats"
+                : "📊 Fin de manche"
+              : "➡ Suivante"}
+          </button>
+        </div>
+      </div>
+    );
+
+  if (bluffVote)
+    return (
+      <HostBluffVoteView
+        payload={bluffVote}
+        question={bluffInput?.text ?? ""}
+        votedCount={bluffVotedCount}
+        totalPlayers={
+          players.filter((p: any) => p.connected && !p.isEliminated).length
+        }
+        onSkip={nextQuestion}
+      />
+    );
+
+  if (bluffInput)
+    return (
+      <HostBluffInputView
+        payload={bluffInput}
+        submitCount={bluffSubmitCount}
+        submitTotal={bluffSubmitTotal}
+        onSkip={nextQuestion}
+        countdown={countdown}
+      />
+    );
+
   if (reveal && question)
     return (
       <HostReveal

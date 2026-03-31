@@ -40,9 +40,7 @@ export const AVATARS: Avatar[] = [
 export type Difficulty = "easy" | "medium" | "hard";
 
 // ─── Powers ───────────────────────────────────────────────────
-// Attack powers
 export type AttackPower = "blind" | "freeze" | "flip" | "shuffle";
-// Defense powers
 export type DefensePower = "shield" | "double" | "mirror" | "ghost";
 export type PowerType = AttackPower | DefensePower;
 
@@ -76,7 +74,6 @@ export interface PendingEffect {
 
 // ─── Game mode ────────────────────────────────────────────────
 export type GameMode = "classic" | "teams" | "tournament";
-
 export type TeamId = "red" | "blue" | "green" | "yellow" | "purple" | "orange";
 export const ALL_TEAM_IDS: TeamId[] = [
   "red",
@@ -95,6 +92,7 @@ export interface GameConfig {
   questionsPerRound: number;
   powersEnabled: boolean;
   teamCount: number;
+  bluffEnabled: boolean; // ← NEW: include open/bluff questions
 }
 
 export interface Team {
@@ -116,17 +114,13 @@ export interface Player {
   answers: Record<string, number>;
   answerTimes: Record<string, number>;
   teamId?: string;
-
-  // Specialty theme chosen by player at join
   specialtyTheme: string | null;
+  userId?: string | null; // ← NEW: linked account (optional)
 
-  // Powers: 1 attack + 1 defense per round
-  attackPower: AttackPower | null; // current attack card
-  defensePower: DefensePower | null; // current defense card
+  attackPower: AttackPower | null;
+  defensePower: DefensePower | null;
   attackUsed: boolean;
   defenseUsed: boolean;
-
-  // Active defense states
   shieldActive: boolean;
   mirrorActive: boolean;
   doubleNextAnswer: boolean;
@@ -134,8 +128,6 @@ export interface Player {
   frozenUntil: number | null;
   activeEffects: ActiveEffect[];
   pendingEffects: PendingEffect[];
-
-  // Round tracking
   roundCorrectCount: number;
 }
 
@@ -149,14 +141,26 @@ export interface PlayerAnswer {
   timeTaken: number;
 }
 
+// ─── Bluff (open question) types ─────────────────────────────
+export interface BluffOption {
+  letter: string; // A, B, C…
+  text: string;
+  isReal: boolean;
+  authorId?: string; // undefined = real answer
+}
+
+// ─── Room status (includes bluff phases) ─────────────────────
 export type RoomStatus =
   | "lobby"
   | "playing"
   | "paused"
   | "revealing"
   | "round_end"
-  | "finished";
+  | "finished"
+  | "bluff_input" // players typing fake answers
+  | "bluff_voting"; // players voting on options
 
+// ─── Game state ───────────────────────────────────────────────
 export interface GameState {
   roomCode: string;
   hostSocketId: string;
@@ -173,15 +177,28 @@ export interface GameState {
   teams: Record<string, Team>;
   lastQuestionPoints: Record<string, number>;
   lastQuestionTimes: Record<string, number>;
+
+  // Bluff state
+  bluffSubmissions?: Record<string, string>; // playerId → fake text
+  bluffOptions?: BluffOption[]; // mixed options for voting
+  bluffVotes?: Record<string, string>; // playerId → letter
+  bluffDeadline?: number; // ms timestamp
 }
+
+// ─── Question ─────────────────────────────────────────────────
+export type QuestionType = "mcq" | "open";
 
 export interface Question {
   id: string;
   text: string;
-  choices: string[];
-  correctIndex: number;
+  choices: string[]; // empty [] for type:"open"
+  correctIndex: number; // -1 for type:"open"
+  correctAnswer?: string; // only for type:"open"
   timeLimit: number;
   theme: string;
   difficulty: Difficulty;
+  type?: QuestionType; // default "mcq"
   imageUrl?: string;
+  audioUrl?: string; // URL to audio file (mp3/ogg)
+  videoUrl?: string; // URL to video file or YouTube embed
 }

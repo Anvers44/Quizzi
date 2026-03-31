@@ -1,4 +1,19 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: quiz
+      POSTGRES_USER: quiz
+      POSTGRES_PASSWORD: quizpass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quiz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -20,8 +35,14 @@ services:
       PORT: "4000"
       HOST: "0.0.0.0"
       REDIS_URL: "redis://redis:6379"
+      DATABASE_URL: "postgresql://quiz:quizpass@postgres:5432/quiz"
+      JWT_SECRET: ${JWT_SECRET:-quiz-secret-dev-change-in-prod}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     volumes:
       - ./backend/src:/app/src
 
@@ -39,3 +60,4 @@ services:
 
 volumes:
   redis_data:
+  postgres_data:

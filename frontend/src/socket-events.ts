@@ -4,6 +4,7 @@ import type {
   AttackPower,
   DefensePower,
   Avatar,
+  BluffOption,
 } from "./types";
 
 export interface PublicPlayer {
@@ -20,9 +21,9 @@ export interface PublicPlayer {
   isEliminated?: boolean;
   activeEffectTypes?: PowerType[];
   hasAnswered?: boolean;
+  hasSubmittedBluff?: boolean;
   specialtyTheme?: string | null;
 }
-
 export interface TeamPublic {
   id: string;
   name: string;
@@ -37,7 +38,9 @@ export interface RoomStatePayload {
     | "paused"
     | "revealing"
     | "round_end"
-    | "finished";
+    | "finished"
+    | "bluff_input"
+    | "bluff_voting";
   config: GameConfig;
   players: PublicPlayer[];
   currentQuestionIndex: number;
@@ -53,13 +56,16 @@ export interface QuestionPayload {
   timeLimit: number;
   index: number;
   total: number;
-  startedAt: number; // when the timer starts (ms timestamp)
-  isRoundStart: boolean; // show countdown overlay only if true
+  startedAt: number;
+  isRoundStart: boolean;
   round: number;
   totalRounds: number;
   imageUrl?: string;
+  audioUrl?: string;
+  videoUrl?: string;
   difficulty: "easy" | "medium" | "hard";
   theme: string;
+  questionType: "mcq" | "open";
 }
 
 export interface RevealPayload {
@@ -100,6 +106,37 @@ export interface PowerEffectPayload {
   newChoiceOrder?: number[];
 }
 
+// ─── Bluff ────────────────────────────────────────────────────
+export interface BluffInputPayload {
+  id: string;
+  text: string;
+  theme: string;
+  difficulty: "easy" | "medium" | "hard";
+  timeLimit: number;
+  startedAt: number;
+  isRoundStart: boolean;
+  round: number;
+  totalRounds: number;
+  imageUrl?: string;
+}
+export interface BluffVotePayload {
+  options: Array<{ letter: string; text: string }>;
+  timeLimit: number;
+  startedAt: number;
+  question: string;
+}
+export interface BluffRevealPayload {
+  questionId: string;
+  question: string;
+  correctAnswer: string;
+  options: BluffOption[];
+  votes: Record<string, string>;
+  pointsEarned: Record<string, number>;
+  scores: PublicPlayer[];
+  teams: Record<string, TeamPublic>;
+  authorPseudos: Record<string, string>;
+}
+
 export interface ClientToServerEvents {
   "host:join": (d: { roomCode: string }) => void;
   "player:join": (d: {
@@ -133,6 +170,18 @@ export interface ClientToServerEvents {
     playerId: string;
     sessionToken: string;
   }) => void;
+  "player:bluff_submit": (d: {
+    roomCode: string;
+    playerId: string;
+    sessionToken: string;
+    text: string;
+  }) => void;
+  "player:bluff_vote": (d: {
+    roomCode: string;
+    playerId: string;
+    sessionToken: string;
+    letter: string;
+  }) => void;
 }
 
 export interface ServerToClientEvents {
@@ -156,5 +205,14 @@ export interface ServerToClientEvents {
   }) => void;
   "power:effect": (d: PowerEffectPayload) => void;
   "power:blocked": (d: { byShield: boolean; mirrorSent: boolean }) => void;
+  "bluff:input_start": (d: BluffInputPayload) => void;
+  "bluff:submitted": (d: {
+    playerId: string;
+    count: number;
+    total: number;
+  }) => void;
+  "bluff:vote_start": (d: BluffVotePayload) => void;
+  "bluff:voted": (d: { playerId: string }) => void;
+  "bluff:reveal": (d: BluffRevealPayload) => void;
   error: (d: { message: string }) => void;
 }

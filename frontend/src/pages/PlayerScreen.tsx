@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+/**
+ * PlayerScreen.tsx — version complète avec bluff intégré
+ * Les écrans bluff sont insérés dans le flux principal.
+ */
+
+import { useState, useEffect, useRef } from "react";
 import { useRoom } from "../hooks/useRoom";
 import { useAnswer } from "../hooks/useAnswer";
 import { useTimer } from "../hooks/useTimer";
@@ -21,6 +26,11 @@ import {
   unlockAudio,
 } from "../lib/sound";
 import Scoreboard from "../components/Scoreboard";
+import {
+  BluffInputScreen,
+  BluffVoteScreen,
+  BluffRevealScreen,
+} from "../components/BluffScreens";
 import type { Avatar, AttackPower, DefensePower, Difficulty } from "../types";
 import type { PublicPlayer } from "../socket-events";
 
@@ -53,6 +63,8 @@ const DIFF_STARS: Record<Difficulty, string> = {
   hard: "⭐⭐⭐",
 };
 
+// ── Helpers ───────────────────────────────────────────────────
+
 function ConnBadge({ connected }: { connected: boolean }) {
   return (
     <div
@@ -67,7 +79,6 @@ function ConnBadge({ connected }: { connected: boolean }) {
   );
 }
 
-// ─── Round-start countdown overlay ───────────────────────────
 function CountdownOverlay({ n, round }: { n: number; round: number }) {
   return (
     <div className="absolute inset-0 bg-indigo-900/96 z-50 flex flex-col items-center justify-center pointer-events-none animate-fadeIn">
@@ -85,99 +96,8 @@ function CountdownOverlay({ n, round }: { n: number; round: number }) {
   );
 }
 
-// ─── Visual effects from pending powers ──────────────────────
-function usePowerEffects(powerEffect: any, playerId: string) {
-  const [flip, setFlip] = useState(false);
-  const [freeze, setFreeze] = useState(false);
-  const [blind, setBlind] = useState<number | null>(null);
-  const [shuffle, setShuffle] = useState<number[] | null>(null);
+// ── Power panel ───────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!powerEffect || powerEffect.targetPlayerId !== playerId) return;
-    const t = powerEffect.type;
-    playPowerSound();
-    if (t === "flip") {
-      setFlip(true);
-      setTimeout(() => setFlip(false), 5000);
-    }
-    if (t === "freeze") {
-      setFreeze(true);
-      setTimeout(() => setFreeze(false), 4000);
-    }
-    if (t === "blind") {
-      setBlind(powerEffect.hiddenChoiceIndex ?? 0);
-      setTimeout(() => setBlind(null), 8000);
-    }
-    if (t === "shuffle") {
-      setShuffle(powerEffect.newChoiceOrder ?? null);
-      setTimeout(() => setShuffle(null), 6000);
-    }
-  }, [powerEffect, playerId]);
-
-  return { flip, freeze, blind, shuffle };
-}
-
-// ─── Power notification (for everyone) ───────────────────────
-function PowerNotification({
-  powerEffect,
-  playerId,
-}: {
-  powerEffect: any;
-  playerId: string;
-}) {
-  const [visible, setVisible] = useState(false);
-  const [data, setData] = useState<any>(null);
-
-  useEffect(() => {
-    if (!powerEffect) return;
-    setData(powerEffect);
-    setVisible(true);
-    const t = setTimeout(() => setVisible(false), 3500);
-    return () => clearTimeout(t);
-  }, [powerEffect]);
-
-  if (!visible || !data) return null;
-
-  const isTarget = data.targetPlayerId === playerId;
-  const isAttacker = data.fromPlayerId === playerId;
-
-  return (
-    <div
-      className={`fixed top-16 left-0 right-0 flex justify-center z-40 pointer-events-none px-4 animate-slideDown`}
-    >
-      <div
-        className={`flex items-center gap-3 px-4 py-3 rounded-2xl shadow-lg font-semibold text-sm max-w-sm ${
-          isTarget
-            ? "bg-red-500/95 text-white"
-            : isAttacker
-              ? "bg-purple-500/95 text-white"
-              : "bg-indigo-700/95 text-white"
-        }`}
-      >
-        <span className="text-2xl">
-          {AVATAR_EMOJI[data.fromAvatar as Avatar] || "❓"}
-        </span>
-        <div>
-          {isTarget ? (
-            <p>
-              ⚔️ <strong>{data.fromPseudo}</strong> t'a utilisé{" "}
-              {POWER_LABELS[data.type as any]}!
-            </p>
-          ) : isAttacker ? (
-            <p>✅ Pouvoir {POWER_LABELS[data.type as any]} envoyé !</p>
-          ) : (
-            <p>
-              ⚔️ <strong>{data.fromPseudo}</strong> a attaqué quelqu'un avec{" "}
-              {POWER_LABELS[data.type as any]}
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Power panel in reveal screen ────────────────────────────
 function PowerRevealPanel({
   attackPower,
   defensePower,
@@ -187,19 +107,10 @@ function PowerRevealPanel({
   playerId,
   onUseAttack,
   onUseDefense,
-}: {
-  attackPower: AttackPower | null;
-  defensePower: DefensePower | null;
-  attackUsed: boolean;
-  defenseUsed: boolean;
-  players: PublicPlayer[];
-  playerId: string;
-  onUseAttack: (tid: string) => void;
-  onUseDefense: () => void;
-}) {
+}: any) {
   const [targeting, setTargeting] = useState(false);
   const targets = players.filter(
-    (p) => p.id !== playerId && p.connected && !p.isEliminated,
+    (p: any) => p.id !== playerId && p.connected && !p.isEliminated,
   );
 
   if (targeting)
@@ -209,7 +120,7 @@ function PowerRevealPanel({
           ⚔️ Choisir une cible :
         </p>
         <div className="flex flex-wrap gap-2 justify-center mb-2">
-          {targets.map((p) => (
+          {targets.map((p: any) => (
             <button
               key={p.id}
               onClick={() => {
@@ -239,7 +150,6 @@ function PowerRevealPanel({
         Tes pouvoirs
       </p>
       <div className="flex gap-2">
-        {/* Attack */}
         {attackPower ? (
           <button
             onClick={() => {
@@ -264,8 +174,6 @@ function PowerRevealPanel({
             Pas d'attaque
           </div>
         )}
-
-        {/* Defense */}
         {defensePower ? (
           <button
             onClick={() => {
@@ -298,103 +206,8 @@ function PowerRevealPanel({
   );
 }
 
-// ─── Lobby ───────────────────────────────────────────────────
-function Lobby({
-  roomCode,
-  playerId,
-  pseudo,
-  avatar,
-  players,
-  connected,
-  teams,
-  config,
-  specialtyTheme,
-  onLeave,
-}: any) {
-  const profile = loadProfile();
-  const myTeamId = players.find((p: any) => p.id === playerId)?.teamId;
-  const myTeam = myTeamId && TEAM_META[myTeamId as keyof typeof TEAM_META];
-  return (
-    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6 overflow-y-auto animate-fadeIn">
-      <div className="w-full max-w-sm flex justify-between items-center">
-        <div
-          className={`text-xs px-3 py-1 rounded-full font-semibold ${connected ? "bg-green-500/20 text-green-300" : "bg-red-500/20 text-red-300 animate-pulse"}`}
-        >
-          {connected ? "● Connecté" : "○ Reconnexion…"}
-        </div>
-        <button
-          onClick={onLeave}
-          className="text-sm text-indigo-400 font-semibold"
-        >
-          ✕ Quitter
-        </button>
-      </div>
-      <div className="text-6xl animate-popIn">{AVATAR_EMOJI[avatar]}</div>
-      <h1 className="text-2xl font-extrabold text-white animate-slideDown">
-        {pseudo}
-      </h1>
-      {specialtyTheme && specialtyTheme !== "none" && (
-        <div className="bg-yellow-400/20 border border-yellow-400 rounded-xl px-3 py-1 text-xs font-bold text-yellow-300">
-          ⭐ Spécialité : {THEME_LABELS[specialtyTheme] || specialtyTheme}
-        </div>
-      )}
-      {myTeam && (
-        <div
-          className={`px-4 py-2 rounded-xl text-sm font-bold ${myTeam.light} border ${myTeam.border} ${myTeam.text} animate-scaleIn`}
-        >
-          {myTeam.emoji} Équipe {myTeam.label}
-        </div>
-      )}
-      <div className="bg-indigo-800 rounded-2xl px-8 py-3 flex flex-col items-center gap-1 animate-slideUp">
-        <p className="text-indigo-400 text-xs uppercase tracking-widest">
-          Partie
-        </p>
-        <p className="text-2xl font-bold text-white tracking-widest">
-          {roomCode}
-        </p>
-        {config && (
-          <p className="text-indigo-400 text-xs">
-            {config.mode === "teams"
-              ? "Équipes"
-              : config.mode === "tournament"
-                ? "Tournoi"
-                : "Classique"}
-            {config.powersEnabled ? " · ⚡ Pouvoirs" : ""}
-          </p>
-        )}
-      </div>
-      <p className="text-indigo-300 text-base animate-pulse">
-        En attente du début…
-      </p>
-      {profile && profile.gamesPlayed > 0 && (
-        <div className="w-full max-w-sm bg-indigo-800/60 border border-indigo-600 rounded-2xl px-4 py-3 animate-slideUp delay-200">
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div>
-              <p className="text-white font-extrabold text-lg">
-                {profile.gamesPlayed}
-              </p>
-              <p className="text-indigo-400 text-xs">Parties</p>
-            </div>
-            <div>
-              <p className="text-yellow-400 font-extrabold text-lg">
-                {profile.wins}
-              </p>
-              <p className="text-indigo-400 text-xs">Victoires</p>
-            </div>
-            <div>
-              <p className="text-green-400 font-extrabold text-lg">
-                {profile.totalScore.toLocaleString()}
-              </p>
-              <p className="text-indigo-400 text-xs">Score</p>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+// ── Question screen ───────────────────────────────────────────
 
-// ─── Question screen ─────────────────────────────────────────
 function QuestionScreen({
   roomCode,
   question,
@@ -402,6 +215,7 @@ function QuestionScreen({
   pausedTimeLeft,
   countdown,
   powerEffect,
+  onPowerEffectHandled,
   players,
   playerId,
   specialtyTheme,
@@ -419,9 +233,44 @@ function QuestionScreen({
   const answered = status === "sent" || status === "already";
   const lastBeep = useRef(-1);
   const lastCdBeep = useRef(-1);
-  const effects = usePowerEffects(powerEffect, playerId);
 
-  // Countdown beeps
+  // ✅ useState / useEffect importés en haut du fichier, utilisés directement
+  const [flipR, setFlipR] = useState(false);
+  const [freezeR, setFreezeR] = useState(false);
+  const [blindR, setBlindR] = useState<number | null>(null);
+  const [shuffleR, setShuffleR] = useState<number[] | null>(null);
+
+  // Dans QuestionScreen, le useEffect existant :
+  useEffect(() => {
+    console.log(
+      "[QuestionScreen] powerEffect =",
+      powerEffect,
+      "| playerId =",
+      playerId,
+    );
+    if (!powerEffect || powerEffect.targetPlayerId !== playerId) return;
+    console.log("[QuestionScreen] APPLYING effect", powerEffect.type);
+    onPowerEffectHandled?.(); // ✅ clear dès traitement
+    const t = powerEffect.type;
+    playPowerSound();
+    if (t === "flip") {
+      setFlipR(true);
+      setTimeout(() => setFlipR(false), 5000);
+    }
+    if (t === "freeze") {
+      setFreezeR(true);
+      setTimeout(() => setFreezeR(false), 4000);
+    }
+    if (t === "blind") {
+      setBlindR(powerEffect.hiddenChoiceIndex ?? 0);
+      setTimeout(() => setBlindR(null), 8000);
+    }
+    if (t === "shuffle") {
+      setShuffleR(powerEffect.newChoiceOrder ?? null);
+      setTimeout(() => setShuffleR(null), 6000);
+    }
+  }, [powerEffect, playerId]);
+
   useEffect(() => {
     if (countdown > 0 && countdown !== lastCdBeep.current) {
       lastCdBeep.current = countdown;
@@ -430,7 +279,6 @@ function QuestionScreen({
     }
   }, [countdown]);
 
-  // Timer beeps (last 5s)
   useEffect(() => {
     if (
       !paused &&
@@ -450,11 +298,9 @@ function QuestionScreen({
     specialtyTheme &&
     specialtyTheme !== "none" &&
     question.theme === specialtyTheme;
-  const displayChoices = effects.shuffle
-    ? effects.shuffle.map((i: number) => ({
-        text: question.choices[i],
-        origIndex: i,
-      }))
+
+  const displayChoices = shuffleR
+    ? shuffleR.map((i: number) => ({ text: question.choices[i], origIndex: i }))
     : question.choices.map((t: string, i: number) => ({
         text: t,
         origIndex: i,
@@ -462,12 +308,14 @@ function QuestionScreen({
 
   return (
     <div
-      className={`relative h-[100dvh] bg-indigo-900 flex flex-col items-center justify-between p-4 overflow-hidden ${effects.flip ? "flip-180" : ""}`}
+      className={`relative h-[100dvh] bg-indigo-900 flex flex-col items-center justify-between p-4 overflow-hidden ${
+        flipR ? "flip-180" : ""
+      }`}
     >
       {countdown > 0 && (
         <CountdownOverlay n={countdown} round={question.round} />
       )}
-      {effects.freeze && (
+      {freezeR && (
         <div className="absolute inset-0 freeze-overlay z-40 flex items-center justify-center pointer-events-none">
           <div className="text-center animate-popIn">
             <p className="text-7xl">❄️</p>
@@ -475,8 +323,6 @@ function QuestionScreen({
           </div>
         </div>
       )}
-
-      {/* Timer */}
       <div className="w-full max-w-sm pt-2 animate-fadeIn">
         <div className="flex justify-between text-indigo-300 text-sm mb-1">
           <div className="flex items-center gap-2">
@@ -491,7 +337,11 @@ function QuestionScreen({
             )}
           </div>
           <span
-            className={`font-bold tabular-nums ${display <= 5 && !paused && !countdown ? "text-red-400 animate-timerPulse" : "text-white"}`}
+            className={`font-bold tabular-nums ${
+              display <= 5 && !paused && !countdown
+                ? "text-red-400 animate-timerPulse"
+                : "text-white"
+            }`}
           >
             {paused ? "⏸ " : ""}
             {countdown > 0 ? `⏳ ${countdown}` : `${display}s`}
@@ -504,7 +354,6 @@ function QuestionScreen({
           />
         </div>
       </div>
-
       {isSpecialtyQ && !answered && (
         <div className="bg-yellow-400/20 border border-yellow-400 rounded-xl px-3 py-1.5 text-yellow-300 text-xs font-bold animate-slideDown">
           ⭐ Question spécialité ! +20% si correct · −100 si faux
@@ -515,8 +364,6 @@ function QuestionScreen({
           ⏸ Partie en pause
         </div>
       )}
-
-      {/* Question */}
       <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm px-2 gap-3">
         {question.imageUrl && (
           <img
@@ -530,7 +377,6 @@ function QuestionScreen({
           {question.text}
         </p>
       </div>
-
       <div className="w-full max-w-sm min-h-8 flex items-center justify-center">
         {answered && !paused && (
           <p className="text-indigo-300 text-sm font-semibold text-center animate-fadeInFast">
@@ -543,20 +389,18 @@ function QuestionScreen({
           </p>
         )}
       </div>
-
-      {/* Choices */}
       <div className="grid grid-cols-2 gap-2 w-full max-w-sm pb-2">
         {displayChoices.map(
           (
             { text, origIndex }: { text: string; origIndex: number },
             di: number,
           ) => {
-            const isHidden = effects.blind === origIndex;
+            const isHidden = blindR === origIndex;
             const isDisabled =
               answered ||
               status === "sending" ||
               paused ||
-              effects.freeze ||
+              freezeR ||
               isHidden ||
               countdown > 0;
             return (
@@ -598,7 +442,351 @@ function QuestionScreen({
   );
 }
 
-// ─── Reveal screen (with powers) ─────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────
+
+export default function PlayerScreen({
+  roomCode,
+  playerId,
+  sessionToken,
+  pseudo,
+  avatar,
+  onLeave,
+  onRoomClosed,
+}: Props) {
+  const statsUpdated = useRef(false);
+  const specialtyTheme = (() => {
+    try {
+      return (
+        JSON.parse(localStorage.getItem("quiz_session") || "{}")
+          ?.specialtyTheme || null
+      );
+    } catch {
+      return null;
+    }
+  })();
+
+  const {
+    state,
+    connected,
+    roomClosed,
+    kicked,
+    question,
+    reveal,
+    roundEnd,
+    finished,
+    paused,
+    pausedTimeLeft,
+    countdown,
+    attackPower,
+    defensePower,
+    attackUsed,
+    defenseUsed,
+    powerEffect,
+    teams,
+    bluffInput,
+    bluffVote,
+    bluffReveal,
+    bluffSubmitCount,
+    bluffSubmitTotal,
+    bluffVotedCount,
+    leave,
+    useAttack,
+    useDefense,
+    clearPowerEffect,
+    submitBluff,
+    voteBluff,
+  } = useRoom({ role: "player", roomCode, playerId, sessionToken });
+
+  const config = state?.config;
+  const players = state?.players ?? [];
+
+  useEffect(() => {
+    unlockAudio();
+  }, []);
+
+  useEffect(() => {
+    if (!finished || statsUpdated.current) return;
+    statsUpdated.current = true;
+    const isTeams = config?.mode === "teams";
+    const myTeamId = finished.scores.find(
+      (p: any) => p.id === playerId,
+    )?.teamId;
+    const myScore =
+      finished.scores.find((p: any) => p.id === playerId)?.score ?? 0;
+    const isWin = isTeams
+      ? myTeamId
+        ? finished.winnerTeamId === myTeamId
+        : false
+      : [...finished.scores]
+          .filter((p: any) => !p.isEliminated)
+          .sort((a: any, b: any) => b.score - a.score)[0]?.id === playerId;
+    updateStats(myScore, isWin);
+  }, [finished, playerId, config]);
+
+  useEffect(() => {
+    if (roomClosed || kicked) {
+      clearSession();
+      onRoomClosed();
+    }
+  }, [roomClosed, kicked]);
+
+  function handleLeave() {
+    leave();
+    clearSession();
+    onLeave();
+  }
+
+  const isEliminated = state?.eliminatedPlayerIds?.includes(playerId);
+
+  // ── Bluff phases ──────────────────────────────────────────
+
+  if (bluffReveal)
+    return (
+      <>
+        <ConnBadge connected={connected} />
+        <BluffRevealScreen
+          payload={bluffReveal}
+          playerId={playerId}
+          pseudo={pseudo}
+          avatar={avatar}
+        />
+        {/* ✅ Pouvoirs disponibles après bluff aussi */}
+        {config?.powersEnabled && (
+          <div className="fixed bottom-4 left-0 right-0 flex justify-center px-4 z-50">
+            <PowerRevealPanel
+              attackPower={attackPower}
+              defensePower={defensePower}
+              attackUsed={attackUsed}
+              defenseUsed={defenseUsed}
+              players={players}
+              playerId={playerId}
+              onUseAttack={useAttack}
+              onUseDefense={useDefense}
+            />
+          </div>
+        )}
+      </>
+    );
+
+  if (bluffVote) {
+    return (
+      <>
+        <ConnBadge connected={connected} />
+        <BluffVoteScreen
+          payload={bluffVote}
+          question={bluffVote.question} // ✅ plus besoin de bluffInput
+          playerId={playerId}
+          votedCount={bluffVotedCount}
+          totalPlayers={
+            players.filter((p: any) => p.connected && !p.isEliminated).length
+          }
+          onVote={voteBluff}
+          mySubmittedText={undefined}
+        />
+      </>
+    );
+  }
+
+  if (bluffInput)
+    return (
+      <>
+        <ConnBadge connected={connected} />
+        <BluffInputScreen
+          payload={bluffInput}
+          playerId={playerId}
+          submitCount={bluffSubmitCount}
+          submitTotal={bluffSubmitTotal}
+          onSubmit={submitBluff}
+          countdown={countdown}
+        />
+      </>
+    );
+
+  // ── Standard phases ───────────────────────────────────────
+
+  if (finished)
+    return (
+      <>
+        <ConnBadge connected={connected} />
+        <FinishedScreen
+          finished={finished}
+          playerId={playerId}
+          pseudo={pseudo}
+          avatar={avatar}
+          teams={teams}
+          config={config}
+          onLeave={handleLeave}
+        />
+      </>
+    );
+
+  if (roundEnd)
+    return (
+      <>
+        <ConnBadge connected={connected} />
+        <RoundEndScreen
+          roundEnd={roundEnd}
+          playerId={playerId}
+          pseudo={pseudo}
+          avatar={avatar}
+          teams={teams}
+          config={config}
+        />
+      </>
+    );
+
+  if (reveal)
+    return (
+      <>
+        <ConnBadge connected={connected} />
+        <RevealScreen
+          reveal={reveal}
+          question={question}
+          playerId={playerId}
+          pseudo={pseudo}
+          avatar={avatar}
+          teams={teams}
+          config={config}
+          attackPower={attackPower}
+          defensePower={defensePower}
+          attackUsed={attackUsed}
+          defenseUsed={defenseUsed}
+          players={players}
+          onUseAttack={useAttack}
+          onUseDefense={useDefense}
+          specialtyTheme={specialtyTheme}
+        />
+      </>
+    );
+
+  if (question && !isEliminated)
+    return (
+      <>
+        <ConnBadge connected={connected} />
+        <QuestionScreen
+          roomCode={roomCode}
+          question={question}
+          paused={paused}
+          pausedTimeLeft={pausedTimeLeft}
+          countdown={countdown}
+          powerEffect={powerEffect}
+          onPowerEffectHandled={clearPowerEffect}
+          players={players}
+          playerId={playerId}
+          sessionToken={sessionToken}
+          specialtyTheme={specialtyTheme}
+        />
+      </>
+    );
+
+  return (
+    <>
+      <ConnBadge connected={connected} />
+      {isEliminated ? (
+        <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6 animate-fadeIn">
+          <div className="text-7xl">👀</div>
+          <p className="text-white text-2xl font-bold">Mode spectateur</p>
+          <p className="text-indigo-300">
+            Tu as été éliminé — regarde la suite !
+          </p>
+        </div>
+      ) : (
+        <LobbyScreen
+          roomCode={roomCode}
+          playerId={playerId}
+          pseudo={pseudo}
+          avatar={avatar}
+          players={players}
+          connected={connected}
+          teams={teams}
+          config={config}
+          specialtyTheme={specialtyTheme}
+          onLeave={handleLeave}
+        />
+      )}
+    </>
+  );
+}
+
+// ─── Sub-screens ──────────────────────────────────────────────
+
+function LobbyScreen({
+  roomCode,
+  playerId,
+  pseudo,
+  avatar,
+  players,
+  connected,
+  teams,
+  config,
+  specialtyTheme,
+  onLeave,
+}: any) {
+  const myTeamId = players.find((p: any) => p.id === playerId)?.teamId;
+  const myTeam = myTeamId && TEAM_META[myTeamId as keyof typeof TEAM_META];
+  return (
+    <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6 overflow-y-auto animate-fadeIn">
+      <div className="w-full max-w-sm flex justify-between items-center">
+        <div
+          className={`text-xs px-3 py-1 rounded-full font-semibold ${
+            connected
+              ? "bg-green-500/20 text-green-300"
+              : "bg-red-500/20 text-red-300 animate-pulse"
+          }`}
+        >
+          {connected ? "● Connecté" : "○ Reconnexion…"}
+        </div>
+        <button
+          onClick={onLeave}
+          className="text-sm text-indigo-400 font-semibold"
+        >
+          ✕ Quitter
+        </button>
+      </div>
+      <div className="text-6xl animate-popIn">{AVATAR_EMOJI[avatar]}</div>
+      <h1 className="text-2xl font-extrabold text-white animate-slideDown">
+        {pseudo}
+      </h1>
+      {specialtyTheme && specialtyTheme !== "none" && (
+        <div className="bg-yellow-400/20 border border-yellow-400 rounded-xl px-3 py-1 text-xs font-bold text-yellow-300">
+          ⭐ Spécialité : {THEME_LABELS[specialtyTheme] || specialtyTheme}
+        </div>
+      )}
+      {myTeam && (
+        <div
+          className={`px-4 py-2 rounded-xl text-sm font-bold ${myTeam.light} border ${myTeam.border} ${myTeam.text} animate-scaleIn`}
+        >
+          {myTeam.emoji} Équipe {myTeam.label}
+        </div>
+      )}
+      <div className="bg-indigo-800 rounded-2xl px-8 py-3 flex flex-col items-center gap-1 animate-slideUp">
+        <p className="text-indigo-400 text-xs uppercase tracking-widest">
+          Partie
+        </p>
+        <p className="text-2xl font-bold text-white tracking-widest">
+          {roomCode}
+        </p>
+        {config && (
+          <p className="text-indigo-400 text-xs flex gap-2">
+            <span>
+              {config.mode === "teams"
+                ? "Équipes"
+                : config.mode === "tournament"
+                  ? "Tournoi"
+                  : "Classique"}
+            </span>
+            {config.powersEnabled && <span>· ⚡</span>}
+            {config.bluffEnabled && <span>· 🎭 Bluff</span>}
+          </p>
+        )}
+      </div>
+      <p className="text-indigo-300 text-base animate-pulse">
+        En attente du début…
+      </p>
+    </div>
+  );
+}
+
 function RevealScreen({
   reveal,
   question,
@@ -631,10 +819,10 @@ function RevealScreen({
     specialtyTheme &&
     specialtyTheme !== "none" &&
     reveal.questionTheme === specialtyTheme;
+  const SHAPES2 = ["▲", "◆", "●", "■"];
 
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center gap-3 p-5 overflow-y-auto">
-      {/* My result */}
       <div
         className={`w-full max-w-sm rounded-2xl px-5 py-3 flex items-center gap-3 mt-2 animate-scaleIn ${
           myChoice !== undefined
@@ -655,15 +843,15 @@ function RevealScreen({
           {myChoice !== undefined ? (
             <>
               <span
-                className={`text-sm font-semibold ${correct ? "text-green-300" : "text-red-300"}`}
+                className={`text-sm font-semibold ${
+                  correct ? "text-green-300" : "text-red-300"
+                }`}
               >
                 {correct ? "✅ Bonne réponse !" : "❌ Mauvaise réponse"}
               </span>
               {isSpecialty && (
                 <span className="text-yellow-400 text-xs">
-                  {correct
-                    ? "⭐ Bonus spécialité +20%"
-                    : "⭐ Pénalité spécialité −100"}
+                  {correct ? "⭐ Bonus spécialité +20%" : "⭐ Pénalité −100"}
                 </span>
               )}
             </>
@@ -695,8 +883,6 @@ function RevealScreen({
           <span className="text-indigo-400 text-xs">#{myRank} total</span>
         </div>
       </div>
-
-      {/* Teams */}
       {config?.mode === "teams" && teams && (
         <div className="w-full max-w-sm grid grid-cols-2 gap-2 animate-slideDown delay-100">
           {ALL_TEAM_IDS.filter((id) => teams[id]).map((id) => (
@@ -714,7 +900,6 @@ function RevealScreen({
           ))}
         </div>
       )}
-
       {question?.imageUrl && (
         <img
           src={question.imageUrl}
@@ -722,8 +907,6 @@ function RevealScreen({
           className="rounded-2xl max-h-24 object-contain animate-scaleIn"
         />
       )}
-
-      {/* Answer breakdown */}
       {question && (
         <div className="w-full max-w-sm flex flex-col gap-2">
           {question.choices.map((choice: string, i: number) => {
@@ -743,7 +926,7 @@ function RevealScreen({
                 style={{ animationDelay: `${i * 0.07}s` }}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-white font-bold">{SHAPES[i]}</span>
+                  <span className="text-white font-bold">{SHAPES2[i]}</span>
                   <span className="text-white text-sm font-semibold flex-1">
                     {choice}
                   </span>
@@ -779,8 +962,6 @@ function RevealScreen({
           })}
         </div>
       )}
-
-      {/* Powers between questions */}
       {config?.powersEnabled && (
         <PowerRevealPanel
           attackPower={attackPower}
@@ -793,7 +974,6 @@ function RevealScreen({
           onUseDefense={onUseDefense}
         />
       )}
-
       <p className="text-indigo-300 text-sm animate-pulse pb-2">
         En attente de la suite…
       </p>
@@ -801,7 +981,6 @@ function RevealScreen({
   );
 }
 
-// ─── Round end ────────────────────────────────────────────────
 function RoundEndScreen({
   roundEnd,
   playerId,
@@ -816,6 +995,7 @@ function RoundEndScreen({
   const myTeamId = roundEnd.scores.find((p: any) => p.id === playerId)?.teamId;
   const myTeam = myTeamId && TEAM_META[myTeamId as keyof typeof TEAM_META];
   const myBonus = roundEnd.perfectBonuses?.[playerId] ?? 0;
+
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-5 p-6 overflow-y-auto animate-fadeIn">
       {amElim ? (
@@ -824,9 +1004,6 @@ function RoundEndScreen({
           <h1 className="text-3xl font-extrabold text-red-400 animate-slideDown">
             Éliminé !
           </h1>
-          <p className="text-indigo-300 text-center">
-            Tu as été éliminé à la manche {roundEnd.round}.
-          </p>
         </>
       ) : (
         <>
@@ -872,7 +1049,6 @@ function RoundEndScreen({
   );
 }
 
-// ─── Finished ─────────────────────────────────────────────────
 function FinishedScreen({
   finished,
   playerId,
@@ -888,15 +1064,15 @@ function FinishedScreen({
   const myRank = sorted.findIndex((p: any) => p.id === playerId) + 1;
   const myScore =
     finished.scores.find((p: any) => p.id === playerId)?.score ?? 0;
-  const MEDALS: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
+  const MEDALS2: Record<number, string> = { 1: "🥇", 2: "🥈", 3: "🥉" };
   const isTeams = config?.mode === "teams";
   const myTeamId = finished.scores.find((p: any) => p.id === playerId)?.teamId;
   const myTeam = myTeamId && TEAM_META[myTeamId as keyof typeof TEAM_META];
-  const profile = loadProfile();
+
   return (
     <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6 overflow-y-auto animate-fadeIn">
       <div className="text-6xl animate-popIn">
-        {MEDALS[myRank] ?? AVATAR_EMOJI[avatar]}
+        {MEDALS2[myRank] ?? AVATAR_EMOJI[avatar]}
       </div>
       <h1 className="text-3xl font-extrabold text-white animate-slideDown">
         Partie terminée !
@@ -919,49 +1095,6 @@ function FinishedScreen({
           <p className="text-indigo-300 text-sm">#{myRank} au classement</p>
         )}
       </div>
-      {isTeams && teams && (
-        <div className="w-full max-w-sm flex flex-col gap-2 animate-slideUp delay-200">
-          {ALL_TEAM_IDS.filter((id) => teams[id]).map((id) => (
-            <div
-              key={id}
-              className={`rounded-2xl px-5 py-3 flex items-center gap-3 border ${TEAM_META[id].border} ${TEAM_META[id].light}`}
-            >
-              <span>{TEAM_META[id].emoji}</span>
-              <span className="text-white font-bold flex-1">
-                {teams[id].name}
-              </span>
-              <span className="text-yellow-400 font-extrabold text-xl">
-                {teams[id].score.toLocaleString()}
-              </span>
-              {finished.winnerTeamId === id && <span>🏆</span>}
-            </div>
-          ))}
-        </div>
-      )}
-      {profile && profile.gamesPlayed > 0 && (
-        <div className="w-full max-w-sm bg-indigo-700/60 border border-indigo-500 rounded-2xl px-4 py-3 animate-slideUp delay-300">
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div>
-              <p className="text-white font-extrabold text-xl">
-                {profile.gamesPlayed}
-              </p>
-              <p className="text-indigo-400 text-xs">Parties</p>
-            </div>
-            <div>
-              <p className="text-yellow-400 font-extrabold text-xl">
-                {profile.wins}
-              </p>
-              <p className="text-indigo-400 text-xs">Victoires</p>
-            </div>
-            <div>
-              <p className="text-green-400 font-extrabold text-xl">
-                {profile.totalScore.toLocaleString()}
-              </p>
-              <p className="text-indigo-400 text-xs">Score total</p>
-            </div>
-          </div>
-        </div>
-      )}
       <div className="w-full max-w-sm overflow-y-auto max-h-52">
         <Scoreboard players={sorted} currentPlayerId={playerId} />
       </div>
@@ -972,194 +1105,5 @@ function FinishedScreen({
         Retour à l'accueil
       </button>
     </div>
-  );
-}
-
-// ─── Main ─────────────────────────────────────────────────────
-export default function PlayerScreen({
-  roomCode,
-  playerId,
-  sessionToken,
-  pseudo,
-  avatar,
-  onLeave,
-  onRoomClosed,
-}: Props) {
-  const statsUpdated = useRef(false);
-  // Get specialtyTheme from session
-  const specialtyTheme = (() => {
-    try {
-      return (
-        JSON.parse(localStorage.getItem("quiz_session") || "{}")
-          ?.specialtyTheme || null
-      );
-    } catch {
-      return null;
-    }
-  })();
-
-  const {
-    state,
-    connected,
-    roomClosed,
-    kicked,
-    question,
-    reveal,
-    roundEnd,
-    finished,
-    paused,
-    pausedTimeLeft,
-    countdown,
-    attackPower,
-    defensePower,
-    attackUsed,
-    defenseUsed,
-    powerEffect,
-    teams,
-    leave,
-    useAttack,
-    useDefense,
-  } = useRoom({ role: "player", roomCode, playerId, sessionToken });
-
-  const config = state?.config;
-  const players = state?.players ?? [];
-
-  // Unlock audio on mount (needed for iOS)
-  useEffect(() => {
-    unlockAudio();
-  }, []);
-
-  useEffect(() => {
-    if (!finished || statsUpdated.current) return;
-    statsUpdated.current = true;
-    const isTeams = config?.mode === "teams";
-    const myTeamId = finished.scores.find(
-      (p: any) => p.id === playerId,
-    )?.teamId;
-    const myScore =
-      finished.scores.find((p: any) => p.id === playerId)?.score ?? 0;
-    const isWin = isTeams
-      ? myTeamId
-        ? finished.winnerTeamId === myTeamId
-        : false
-      : [...finished.scores]
-          .filter((p: any) => !p.isEliminated)
-          .sort((a: any, b: any) => b.score - a.score)[0]?.id === playerId;
-    updateStats(myScore, isWin);
-  }, [finished, playerId, config]);
-
-  useEffect(() => {
-    if (roomClosed || kicked) {
-      clearSession();
-      onRoomClosed();
-    }
-  }, [roomClosed, kicked]);
-  function handleLeave() {
-    leave();
-    clearSession();
-    onLeave();
-  }
-
-  const isEliminated = state?.eliminatedPlayerIds?.includes(playerId);
-
-  if (finished)
-    return (
-      <>
-        <ConnBadge connected={connected} />
-        <FinishedScreen
-          finished={finished}
-          playerId={playerId}
-          pseudo={pseudo}
-          avatar={avatar}
-          teams={teams}
-          config={config}
-          onLeave={handleLeave}
-        />
-      </>
-    );
-  if (roundEnd)
-    return (
-      <>
-        <ConnBadge connected={connected} />
-        <RoundEndScreen
-          roundEnd={roundEnd}
-          playerId={playerId}
-          pseudo={pseudo}
-          avatar={avatar}
-          teams={teams}
-          config={config}
-        />
-      </>
-    );
-  if (reveal)
-    return (
-      <>
-        <ConnBadge connected={connected} />
-        <PowerNotification powerEffect={powerEffect} playerId={playerId} />
-        <RevealScreen
-          reveal={reveal}
-          question={question}
-          playerId={playerId}
-          pseudo={pseudo}
-          avatar={avatar}
-          teams={teams}
-          config={config}
-          attackPower={attackPower}
-          defensePower={defensePower}
-          attackUsed={attackUsed}
-          defenseUsed={defenseUsed}
-          players={players}
-          onUseAttack={useAttack}
-          onUseDefense={useDefense}
-          specialtyTheme={specialtyTheme}
-        />
-      </>
-    );
-  if (question && !isEliminated)
-    return (
-      <>
-        <ConnBadge connected={connected} />
-        <PowerNotification powerEffect={powerEffect} playerId={playerId} />
-        <QuestionScreen
-          roomCode={roomCode}
-          question={question}
-          paused={paused}
-          pausedTimeLeft={pausedTimeLeft}
-          countdown={countdown}
-          powerEffect={powerEffect}
-          players={players}
-          playerId={playerId}
-          sessionToken={sessionToken}
-          specialtyTheme={specialtyTheme}
-        />
-      </>
-    );
-
-  return (
-    <>
-      <ConnBadge connected={connected} />
-      {isEliminated ? (
-        <div className="h-[100dvh] bg-indigo-900 flex flex-col items-center justify-center gap-4 p-6 animate-fadeIn">
-          <div className="text-7xl">👀</div>
-          <p className="text-white text-2xl font-bold">Mode spectateur</p>
-          <p className="text-indigo-300">
-            Tu as été éliminé — regarde la suite !
-          </p>
-        </div>
-      ) : (
-        <Lobby
-          roomCode={roomCode}
-          playerId={playerId}
-          pseudo={pseudo}
-          avatar={avatar}
-          players={players}
-          connected={connected}
-          teams={teams}
-          config={config}
-          specialtyTheme={specialtyTheme}
-          onLeave={handleLeave}
-        />
-      )}
-    </>
   );
 }

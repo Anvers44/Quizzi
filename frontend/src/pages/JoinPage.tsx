@@ -4,7 +4,9 @@ import { saveSession } from "../lib/session";
 import { loadProfile, saveProfile } from "../lib/profile";
 import { AVATARS, AVATAR_EMOJI, THEME_LABELS } from "../types";
 import { unlockAudio } from "../lib/sound";
+import { getAuthHeader } from "../lib/auth";
 import type { Avatar, GameConfig } from "../types";
+import type { AuthUser } from "../lib/auth";
 
 interface Props {
   onJoined: (
@@ -14,10 +16,11 @@ interface Props {
       sessionToken: string;
       pseudo: string;
       avatar: Avatar;
-      specialtyTheme: string | null;
+      specialtyTheme?: string | null;
     },
   ) => void;
   onBack: () => void;
+  authUser: AuthUser | null;
 }
 
 interface RoomInfo {
@@ -29,7 +32,7 @@ interface RoomDetail {
   players: Record<string, { avatar: string }>;
 }
 
-export default function JoinPage({ onJoined, onBack }: Props) {
+export default function JoinPage({ onJoined, onBack, authUser }: Props) {
   const [roomCode, setRoomCode] = useState("");
   const [pseudo, setPseudo] = useState("");
   const [avatar, setAvatar] = useState<Avatar>("fox");
@@ -40,7 +43,6 @@ export default function JoinPage({ onJoined, onBack }: Props) {
   const [takenAvatars, setTakenAvatars] = useState<string[]>([]);
   const [hasProfile, setHasProfile] = useState(false);
 
-  // Load profile
   useEffect(() => {
     const p = loadProfile();
     if (p) {
@@ -48,16 +50,16 @@ export default function JoinPage({ onJoined, onBack }: Props) {
       setAvatar(p.avatar);
       setHasProfile(true);
     }
+    // Pre-fill pseudo from account if available and no profile
+    else if (authUser && !p) setPseudo(authUser.username);
   }, []);
 
-  // Load available rooms
   useEffect(() => {
     apiGet<{ rooms: RoomInfo[] }>("/api/rooms/list")
       .then((d) => setRooms(d.rooms))
       .catch(() => {});
   }, []);
 
-  // When room code changes (6 chars), fetch taken avatars
   useEffect(() => {
     const code = roomCode.trim().toUpperCase();
     if (code.length !== 6) {
@@ -68,7 +70,6 @@ export default function JoinPage({ onJoined, onBack }: Props) {
       .then((d) => {
         const taken = Object.values(d.players || {}).map((p) => p.avatar);
         setTakenAvatars(taken);
-        // Auto-switch if current avatar is taken
         if (taken.includes(avatar)) {
           const free = AVATARS.find((a) => !taken.includes(a));
           if (free) setAvatar(free);
@@ -79,7 +80,6 @@ export default function JoinPage({ onJoined, onBack }: Props) {
 
   async function handleJoin() {
     setError("");
-    // Unlock audio on first user action
     unlockAudio();
     const code = roomCode.trim().toUpperCase();
     if (code.length !== 6) {
@@ -96,15 +96,24 @@ export default function JoinPage({ onJoined, onBack }: Props) {
     }
     setLoading(true);
     try {
-      const res = await apiPost<{
-        playerId: string;
-        sessionToken: string;
-        roomCode: string;
-      }>(`/api/rooms/${code}/join`, {
-        pseudo: pseudo.trim(),
-        avatar,
-        specialtyTheme: specialtyTheme === "none" ? null : specialtyTheme,
-      });
+      // Include auth header if logged in (backend links account to player)
+      const res = await fetch(
+        `${(await import("../config")).config.apiUrl}/api/rooms/${code}/join`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeader() },
+          body: JSON.stringify({
+            pseudo: pseudo.trim(),
+            avatar,
+            specialtyTheme: specialtyTheme === "none" ? null : specialtyTheme,
+          }),
+        },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Erreur réseau" }));
+        throw new Error(err.error ?? "Erreur inconnue");
+      }
+      const data = await res.json();
       const existing = loadProfile();
       saveProfile({
         pseudo: pseudo.trim(),
@@ -113,10 +122,9 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         wins: existing?.wins ?? 0,
         totalScore: existing?.totalScore ?? 0,
       });
-      // Session saved by App.tsx via handlePlayerJoined
-      onJoined(res.roomCode, {
-        playerId: res.playerId,
-        sessionToken: res.sessionToken,
+      onJoined(data.roomCode, {
+        playerId: data.playerId,
+        sessionToken: data.sessionToken,
         pseudo: pseudo.trim(),
         avatar,
         specialtyTheme: specialtyTheme === "none" ? null : specialtyTheme,
@@ -141,7 +149,6 @@ export default function JoinPage({ onJoined, onBack }: Props) {
       onTouchStart={unlockAudio}
       onClick={unlockAudio}
     >
-      {/* Header */}
       <div className="w-full max-w-xs flex items-center justify-between pt-1">
         <button
           onClick={onBack}
@@ -153,7 +160,21 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         <div className="w-12" />
       </div>
 
-      {/* Welcome back */}
+      {/* Account badge */}
+      {authUser && (
+        <div className="w-full max-w-xs bg-green-500/10 border border-green-400/40 rounded-2xl px-4 py-2 flex items-center gap-2">
+          <span className="text-green-300 text-sm">
+            ✅ Connecté en tant que <strong>{authUser.username}</strong>
+          </span>
+        </div>
+      )}
+
+      {!authUser && (
+        <div className="w-full max-w-xs bg-indigo-700/40 border border-indigo-600 rounded-2xl px-4 py-2 text-xs text-indigo-400 text-center">
+          Non connecté — tes stats ne seront pas sauvegardées.
+        </div>
+      )}
+
       {hasProfile && (
         <div className="w-full max-w-xs bg-indigo-700/60 border border-indigo-500 rounded-2xl px-4 py-3 flex items-center gap-3">
           <span className="text-3xl">{AVATAR_EMOJI[avatar]}</span>
@@ -168,7 +189,6 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         </div>
       )}
 
-      {/* Available rooms */}
       {rooms.length > 0 && (
         <div className="w-full max-w-xs flex flex-col gap-2">
           <p className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
@@ -178,14 +198,11 @@ export default function JoinPage({ onJoined, onBack }: Props) {
             <button
               key={r.roomCode}
               onClick={() => setRoomCode(r.roomCode)}
-              className={`flex items-center justify-between px-4 py-3 rounded-xl font-bold transition ${
-                roomCode === r.roomCode
-                  ? "bg-yellow-400 text-indigo-900"
-                  : "bg-indigo-700 text-white"
-              }`}
+              className={`flex items-center justify-between px-4 py-3 rounded-xl font-bold transition ${roomCode === r.roomCode ? "bg-yellow-400 text-indigo-900" : "bg-indigo-700 text-white"}`}
             >
               <div className="flex items-center gap-2">
                 <span>{MODE_EMOJI[r.config?.mode] ?? ""}</span>
+                {r.config?.bluffEnabled && <span title="Bluff activé">🎭</span>}
                 <span className="text-lg tracking-widest">{r.roomCode}</span>
               </div>
               <span className="text-sm opacity-70">
@@ -196,7 +213,6 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         </div>
       )}
 
-      {/* Room code */}
       <div className="w-full max-w-xs flex flex-col gap-1">
         <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
           Code de la partie
@@ -211,7 +227,6 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         />
       </div>
 
-      {/* Pseudo */}
       <div className="w-full max-w-xs flex flex-col gap-1">
         <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
           Ton pseudo
@@ -226,7 +241,6 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         />
       </div>
 
-      {/* Avatar — 16 with taken indicators */}
       <div className="w-full max-w-xs flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <label className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">
@@ -245,13 +259,7 @@ export default function JoinPage({ onJoined, onBack }: Props) {
                 key={a}
                 onClick={() => !isTaken && setAvatar(a)}
                 disabled={isTaken}
-                className={`relative text-3xl p-2 rounded-xl transition-all ${
-                  isSelected
-                    ? "bg-yellow-400 scale-110"
-                    : isTaken
-                      ? "bg-indigo-900 opacity-40 cursor-not-allowed"
-                      : "bg-indigo-800 hover:bg-indigo-700 active:scale-95"
-                }`}
+                className={`relative text-3xl p-2 rounded-xl transition-all ${isSelected ? "bg-yellow-400 scale-110" : isTaken ? "bg-indigo-900 opacity-40 cursor-not-allowed" : "bg-indigo-800 hover:bg-indigo-700 active:scale-95"}`}
               >
                 {AVATAR_EMOJI[a]}
                 {isTaken && (
@@ -275,11 +283,7 @@ export default function JoinPage({ onJoined, onBack }: Props) {
         <div className="grid grid-cols-3 gap-2">
           <button
             onClick={() => setSpecialtyTheme("none")}
-            className={`py-2 rounded-xl text-sm font-semibold transition ${
-              specialtyTheme === "none"
-                ? "bg-yellow-400 text-indigo-900"
-                : "bg-indigo-800 text-white hover:bg-indigo-700"
-            }`}
+            className={`py-2 rounded-xl text-sm font-semibold transition ${specialtyTheme === "none" ? "bg-yellow-400 text-indigo-900" : "bg-indigo-800 text-white hover:bg-indigo-700"}`}
           >
             Aucun
           </button>
@@ -289,11 +293,7 @@ export default function JoinPage({ onJoined, onBack }: Props) {
               <button
                 key={key}
                 onClick={() => setSpecialtyTheme(key)}
-                className={`flex flex-col items-center gap-0.5 py-2 px-1 rounded-xl text-xs font-semibold transition ${
-                  specialtyTheme === key
-                    ? "bg-yellow-400 text-indigo-900"
-                    : "bg-indigo-800 text-white hover:bg-indigo-700"
-                }`}
+                className={`flex flex-col items-center gap-0.5 py-2 px-1 rounded-xl text-xs font-semibold transition ${specialtyTheme === key ? "bg-yellow-400 text-indigo-900" : "bg-indigo-800 text-white hover:bg-indigo-700"}`}
               >
                 <span className="text-xl">{emoji}</span>
                 <span className="text-center leading-tight">

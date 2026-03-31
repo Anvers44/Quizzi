@@ -1094,3 +1094,10 @@ export function pickQuestions(
 
   return [...pool, ...fallback].slice(0, count);
 }
+// ─── APPEND THIS to backend/src/data/questions.ts ────────────
+// Add after the existing RAW array, before the export:
+//
+//   const RAW_OPEN: RawQ[] = [...];
+//   export const QUESTION_BANK = [...MCQ questions..., ...open questions...];
+//
+// ─────────────────────────────────────────────────────────────

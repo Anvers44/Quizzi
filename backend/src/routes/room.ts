@@ -4,6 +4,7 @@ import { redis } from "../redis/client";
 import type { GameState, GameConfig, Team } from "../types";
 import { ALL_TEAM_IDS } from "../types";
 import { pickQuestions } from "../data/questions";
+import { BLUFF_QUESTIONS } from "../data/bluff-questions";
 import { ROOM_TTL_SECONDS } from "../redis/keys";
 
 export const roomRouter = Router();
@@ -30,7 +31,6 @@ roomRouter.post("/", async (req, res) => {
   try {
     const body = req.body as any;
 
-    // Support both `theme` (legacy) and `themes` (new)
     let themes: string[] = [];
     if (Array.isArray(body.themes) && body.themes.length > 0)
       themes = body.themes;
@@ -49,18 +49,33 @@ roomRouter.post("/", async (req, res) => {
         : 5,
       powersEnabled: Boolean(body.powersEnabled) || false,
       teamCount,
+      bluffEnabled: Boolean(body.bluffEnabled) || false, // ← NEW
     };
 
-    // Tournament: generate enough for up to 10 rounds
     const totalQ =
       config.mode === "tournament"
         ? config.questionsPerRound * 10
         : config.rounds * config.questionsPerRound;
 
-    const questions = pickQuestions(themes, config.difficulty, totalQ);
+    let questions = pickQuestions(themes, config.difficulty, totalQ);
+
+    // If bluff enabled, inject 1 bluff question every 5 MCQ questions
+    if (config.bluffEnabled && BLUFF_QUESTIONS.length > 0) {
+      const bluffPool = [...BLUFF_QUESTIONS].sort(() => Math.random() - 0.5);
+      const withBluff = [];
+      let bluffIdx = 0;
+      for (let i = 0; i < questions.length; i++) {
+        withBluff.push(questions[i]);
+        // Insert a bluff question after every 4th MCQ (i.e. 1 per 5 questions)
+        if ((i + 1) % 4 === 0 && bluffIdx < bluffPool.length) {
+          withBluff.push(bluffPool[bluffIdx++]);
+        }
+      }
+      questions = withBluff;
+    }
+
     const roomCode = generateRoomCode();
 
-    // Build teams (2-6 for teams mode, empty otherwise)
     const teams: Record<string, Team> = {};
     if (config.mode === "teams") {
       ALL_TEAM_IDS.slice(0, teamCount).forEach((tid) => {
@@ -88,7 +103,7 @@ roomRouter.post("/", async (req, res) => {
 
     await saveRoom(state);
     console.log(
-      `[room] created ${roomCode} mode=${config.mode} themes=${themes.join(",")} difficulty=${config.difficulty} teamCount=${teamCount}`,
+      `[room] created ${roomCode} mode=${config.mode} bluff=${config.bluffEnabled}`,
     );
     res.status(201).json({ roomCode, config });
   } catch (err) {
@@ -125,7 +140,6 @@ roomRouter.get("/list", async (_req, res) => {
 roomRouter.get("/:roomCode", async (req, res) => {
   const state = await getRoom(req.params.roomCode.toUpperCase());
   if (!state) return res.status(404).json({ error: "Room introuvable" });
-  // Return players with avatar visible (needed for avatar uniqueness check in JoinPage)
   const safePlayers = Object.fromEntries(
     Object.entries(state.players).map(([id, p]) => [
       id,

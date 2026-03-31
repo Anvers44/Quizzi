@@ -5,7 +5,9 @@ import cors from "cors";
 import { roomRouter } from "./routes/room";
 import { playerRouter } from "./routes/player";
 import { answerRouter } from "./routes/answer";
+import { authRouter } from "./routes/auth"; // ✅ ajout
 import { registerSocketHandlers } from "./socketHandlers";
+import { leaderboardRouter } from "./routes/leaderboard"; // ajout
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
@@ -29,6 +31,8 @@ app.use(
 );
 app.use(express.json());
 
+app.use("/api/auth", authRouter); // ✅ ajout
+app.use("/api/leaderboard", leaderboardRouter); // ajout
 app.use("/api/rooms", roomRouter);
 app.use("/api/rooms", playerRouter);
 app.use("/api/rooms", answerRouter);

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getRoom, saveRoom, recordAnswerIfNew } from "../redis/helpers";
 import type { PlayerAnswer, Difficulty } from "../types";
 import { getIo, checkAllAnswered } from "../socketHandlers";
+import { db } from "../db/client";
 
 export const answerRouter = Router();
 
@@ -15,8 +16,8 @@ const MAX_BONUS: Record<Difficulty, number> = {
   medium: 400,
   hard: 600,
 };
-const SPECIALTY_BONUS_MULT = 1.2; // +20% si bonne réponse sur thème spécialité
-const SPECIALTY_WRONG_PEN = 100; // -100 pts si mauvaise réponse sur thème spécialité
+const SPECIALTY_BONUS_MULT = 1.2;
+const SPECIALTY_WRONG_PEN = 100;
 
 function computePoints(
   correct: boolean,
@@ -75,22 +76,14 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     player.doubleNextAnswer && correct,
   );
 
-  // Modificateur thème spécialité
   const isSpecialty =
     player.specialtyTheme && player.specialtyTheme === question.theme;
   if (isSpecialty) {
-    if (correct) {
-      // +20% sur bonne réponse spécialité
-      points = Math.round((points * SPECIALTY_BONUS_MULT) / 50) * 50;
-    } else {
-      // Pénalité sur mauvaise réponse spécialité
-      points = -SPECIALTY_WRONG_PEN;
-    }
+    if (correct) points = Math.round((points * SPECIALTY_BONUS_MULT) / 50) * 50;
+    else points = -SPECIALTY_WRONG_PEN;
   }
 
   if (correct && player.doubleNextAnswer) player.doubleNextAnswer = false;
-
-  // scoreDelta représente le vrai delta (peut être négatif pour pénalité spécialité)
   const scoreDelta = points;
 
   const answer: PlayerAnswer = {
@@ -99,7 +92,7 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     choiceIndex,
     answeredAt: Date.now(),
     correct,
-    points: Math.max(scoreDelta, 0), // pour les stats individuelles, on ne stocke pas de valeur négative
+    points: Math.max(scoreDelta, 0),
     timeTaken,
   };
 
@@ -109,14 +102,12 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
       .status(409)
       .json({ error: "Réponse déjà envoyée", alreadyAnswered: true });
 
-  // Appliquer le delta au score (jamais en dessous de 0)
   player.score = Math.max(0, player.score + scoreDelta);
-
   if (!player.answeredQuestions.includes(questionId))
     player.answeredQuestions.push(questionId);
   if (!player.answers) player.answers = {};
-  player.answers[questionId] = choiceIndex;
   if (!player.answerTimes) player.answerTimes = {};
+  player.answers[questionId] = choiceIndex;
   player.answerTimes[questionId] = timeTaken;
   if (correct) {
     if (typeof player.roundCorrectCount !== "number")
@@ -126,7 +117,6 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
 
   if (!state.lastQuestionPoints) state.lastQuestionPoints = {};
   if (!state.lastQuestionTimes) state.lastQuestionTimes = {};
-  // On stocke le vrai delta (y compris négatif) pour l'affichage révélation
   state.lastQuestionPoints[playerId] = scoreDelta;
   state.lastQuestionTimes[playerId] = timeTaken;
 
@@ -134,14 +124,30 @@ answerRouter.post("/:roomCode/answer", async (req, res) => {
     state.config.mode === "teams" &&
     player.teamId &&
     state.teams[player.teamId]
-  ) {
+  )
     state.teams[player.teamId].score = Math.max(
       0,
       state.teams[player.teamId].score + Math.max(0, scoreDelta),
     );
-  }
 
   await saveRoom(state);
+
+  // ── Log to DB for registered users ──
+  if (player.userId) {
+    db.query(
+      `INSERT INTO answer_logs (user_id, question_id, theme, difficulty, correct, time_taken, points_earned)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        player.userId,
+        questionId,
+        question.theme,
+        question.difficulty,
+        correct,
+        timeTaken,
+        Math.max(0, scoreDelta),
+      ],
+    ).catch((e) => console.error("[db] answer_log:", e.message));
+  }
 
   try {
     const io = getIo();

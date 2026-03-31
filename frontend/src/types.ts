@@ -156,7 +156,7 @@ export const POWER_DESC: Record<PowerType, string> = {
   ghost: "Inciblable cette question",
 };
 
-// ─── Theme labels ─────────────────────────────────────────────
+// ─── Themes ───────────────────────────────────────────────────
 export const THEME_LABELS: Record<string, string> = {
   general: "🌍 Général",
   sport: "⚽ Sport",
@@ -185,6 +185,7 @@ export interface GameConfig {
   questionsPerRound: number;
   powersEnabled: boolean;
   teamCount: number;
+  bluffEnabled: boolean; // ← NEW
 }
 
 export interface Team {
@@ -192,20 +193,15 @@ export interface Team {
   name: string;
   score: number;
 }
-
 export interface Player {
   id: string;
-  sessionToken: string;
-  roomCode: string;
   pseudo: string;
   avatar: Avatar;
   score: number;
   connected: boolean;
-  answeredQuestions: string[];
   teamId?: string;
   specialtyTheme?: string | null;
 }
-
 export interface Question {
   id: string;
   text: string;
@@ -214,7 +210,11 @@ export interface Question {
   timeLimit: number;
   theme: string;
   difficulty: Difficulty;
+  type?: "mcq" | "open";
   imageUrl?: string;
+  audioUrl?: string;
+  videoUrl?: string;
+  correctAnswer?: string;
 }
 
 export type RoomStatus =
@@ -223,7 +223,9 @@ export type RoomStatus =
   | "paused"
   | "revealing"
   | "round_end"
-  | "finished";
+  | "finished"
+  | "bluff_input"
+  | "bluff_voting";
 
 export interface GameState {
   roomCode: string;
@@ -235,6 +237,14 @@ export interface GameState {
   currentRound: number;
   eliminatedPlayerIds: string[];
   teams: Record<string, Team>;
+}
+
+// ─── Bluff ────────────────────────────────────────────────────
+export interface BluffOption {
+  letter: string;
+  text: string;
+  isReal?: boolean;
+  authorId?: string;
 }
 
 // ─── Settings ────────────────────────────────────────────────
