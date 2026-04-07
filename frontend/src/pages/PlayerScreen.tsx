@@ -221,6 +221,13 @@ function QuestionScreen({
   players,
   playerId,
   specialtyTheme,
+  attackPower,
+  defensePower,
+  attackUsed,
+  defenseUsed,
+  onUseAttack,
+  onUseDefense,
+  config,
 }: any) {
   const timeLeft = useTimer(
     question.startedAt,
@@ -327,6 +334,18 @@ function QuestionScreen({
         <div className="bg-indigo-700/80 rounded-2xl px-6 py-2 text-white font-bold text-sm">
           ⏸ Partie en pause
         </div>
+      )}
+      {config?.powersEnabled && !attackUsed && !defenseUsed && !paused && !freezeR && countdown === 0 && (
+        <PowerRevealPanel
+          attackPower={attackPower}
+          defensePower={defensePower}
+          attackUsed={attackUsed}
+          defenseUsed={defenseUsed}
+          players={players}
+          playerId={playerId}
+          onUseAttack={onUseAttack}
+          onUseDefense={onUseDefense}
+        />
       )}
       <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm px-2 gap-3">
         {question.imageUrl && (
@@ -507,39 +526,19 @@ export default function PlayerScreen({
   const [blindR, setBlindR] = useState<number | null>(null);
   const [shuffleR, setShuffleR] = useState<number[] | null>(null);
 
+  // Reset appliedEffect when reveal phase ends (new question starts)
   useEffect(() => {
-    console.log(
-      "[PlayerScreen] useEffect powerEffect déclenché =",
-      powerEffect,
-    );
-    console.log("[PlayerScreen] playerId =", playerId);
-    if (!powerEffect) {
-      console.log("[PlayerScreen] powerEffect est null → skip");
-      return;
+    if (question && !reveal) {
+      appliedEffect.current = null;
     }
-    if (powerEffect.targetPlayerId !== playerId) {
-      console.log(
-        "[PlayerScreen] targetPlayerId",
-        powerEffect.targetPlayerId,
-        "≠ playerId",
-        playerId,
-        "→ skip",
-      );
-      return;
-    }
-    const key = `${powerEffect.type}-${powerEffect.fromPlayerId}`;
-    console.log(
-      "[PlayerScreen] key =",
-      key,
-      "| appliedEffect =",
-      appliedEffect.current,
-    );
-    if (appliedEffect.current === key) {
-      console.log("[PlayerScreen] déjà appliqué → skip");
-      return;
-    }
-    appliedEffect.current = key;
-    console.log("[PlayerScreen] ✅ APPLICATION de", powerEffect.type);
+  }, [question, reveal]);
+
+  useEffect(() => {
+    if (!powerEffect) return;
+    if (powerEffect.targetPlayerId !== playerId) return;
+    const effectKey = `${powerEffect.type}-${powerEffect.fromPlayerId}`;
+    if (appliedEffect.current === effectKey) return;
+    appliedEffect.current = effectKey;
 
     playPowerSound();
     if (powerEffect.type === "flip") {
@@ -558,7 +557,9 @@ export default function PlayerScreen({
       setShuffleR(powerEffect.newChoiceOrder ?? null);
       setTimeout(() => setShuffleR(null), 6000);
     }
-  }, [powerEffect, playerId]);
+    // Clear the power effect after applying
+    clearPowerEffect();
+  }, [powerEffect, playerId, clearPowerEffect]);
 
   // ── Bluff phases ──────────────────────────────────────────
 
@@ -676,16 +677,20 @@ export default function PlayerScreen({
           paused={paused}
           pausedTimeLeft={pausedTimeLeft}
           countdown={countdown}
-          flipR={flipR} // ✅
-          freezeR={freezeR} // ✅
-          blindR={blindR} // ✅
-          shuffleR={shuffleR} // ✅
-          powerEffect={powerEffect}
-          onPowerEffectHandled={clearPowerEffect}
+          flipR={flipR}
+          freezeR={freezeR}
+          blindR={blindR}
+          shuffleR={shuffleR}
           players={players}
           playerId={playerId}
-          sessionToken={sessionToken}
           specialtyTheme={specialtyTheme}
+          attackPower={attackPower}
+          defensePower={defensePower}
+          attackUsed={attackUsed}
+          defenseUsed={defenseUsed}
+          onUseAttack={useAttack}
+          onUseDefense={useDefense}
+          config={config}
         />
       </>
     );

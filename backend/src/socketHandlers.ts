@@ -948,7 +948,7 @@ export function registerSocketHandlers(io: AppServer) {
           "target=",
           targetPlayerId,
         );
-        if (!state || state.status !== "revealing") {
+        if (!state || (state.status !== "revealing" && state.status !== "playing")) {
           console.log("[use_attack] BLOQUÉ — mauvais status");
           return;
         }
@@ -1024,7 +1024,7 @@ export function registerSocketHandlers(io: AppServer) {
       async ({ roomCode, playerId, sessionToken }) => {
         const code = roomCode.toUpperCase();
         const state = await getRoom(code);
-        if (!state || state.status !== "revealing") return;
+        if (!state || (state.status !== "revealing" && state.status !== "playing")) return;
         const player = state.players[playerId];
         if (!player || player.sessionToken !== sessionToken) return;
         if (!player.defensePower || player.defenseUsed) return;

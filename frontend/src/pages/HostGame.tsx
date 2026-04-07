@@ -3,6 +3,10 @@ import { useRoom } from "../hooks/useRoom";
 import { useTimer } from "../hooks/useTimer";
 import { clearSession } from "../lib/session";
 import { AVATAR_EMOJI, TEAM_META, ALL_TEAM_IDS } from "../types";
+import {
+  startBackgroundMusic,
+  stopBackgroundMusic,
+} from "../lib/sound";
 import type { GameConfig } from "../types";
 import type { PublicPlayer, TeamPublic } from "../socket-events";
 import Scoreboard from "../components/Scoreboard";
@@ -462,6 +466,16 @@ export default function HostGame({ roomCode, config, onLeave }: Props) {
     resumeGame,
     stopGame,
   } = useRoom({ role: "host", roomCode });
+
+  // Start music at first question, stop at game end
+  useEffect(() => {
+    if (question && !finished) {
+      startBackgroundMusic();
+    }
+    if (finished) {
+      stopBackgroundMusic();
+    }
+  }, [question, finished]);
 
   useEffect(() => {
     if (roomClosed) {
